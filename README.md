@@ -2,6 +2,15 @@
 
 **A governance framework for running multiple software projects with AI coding agents.**
 
+> **⚠️ Status: not actively maintained, not built for widespread adoption.**
+> This is a point-in-time snapshot published as a companion to an essay —
+> *[Risk-management lessons from cave diving, applied to working with coding
+> agents](https://oscarswanros.com/2026/05/29/risk-management-lessons-from-cave-diving-applied-to-working-with-coding-agents/)* —
+> not a product. It's shared to read, learn from, and fork — not to install and
+> rely on. There is no support, no roadmap, and no commitment to respond to
+> issues or pull requests. If something here is useful, take it and make it your
+> own.
+
 Homebase is the "company HQ" for a one-operator (or small-team) software shop: a
 single repository that holds your **staff** (reusable AI agents), your
 **handbook** (SOPs), your **operating contract** (the rules agents must follow),
@@ -153,6 +162,11 @@ commit-message policy, and cannot end a session with uncommitted or unpushed
 work. See `governance/RISK_MANAGEMENT.md` for the "inverted Swiss cheese"
 rationale and `governance/AGENT_OPERATING_CONTRACT.md` for the ten rules every
 agent inherits.
+
+The thinking behind this default-deny posture — borrowed from how cave divers
+build redundant, independent safety layers — is laid out in the companion essay:
+*[Risk-management lessons from cave diving, applied to working with coding
+agents](https://oscarswanros.com/2026/05/29/risk-management-lessons-from-cave-diving-applied-to-working-with-coding-agents/)*.
 
 ## Making it yours
 
