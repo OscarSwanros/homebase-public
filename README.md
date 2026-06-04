@@ -168,6 +168,106 @@ build redundant, independent safety layers — is laid out in the companion essa
 *[Risk-management lessons from cave diving, applied to working with coding
 agents](https://oscarswanros.com/2026/05/29/risk-management-lessons-from-cave-diving-applied-to-working-with-coding-agents/)*.
 
+## A session in practice
+
+Here's what it looks like to actually use this — a walkthrough against the
+fictional example portfolio (`GasCalc`, the safety-critical gas calculator in
+the `Field Suite` monorepo). You talk to Claude Code in plain language; the
+framework turns that into tracked, gated, reviewed work.
+
+---
+
+> **You:** "Let's add a Maximum Operating Depth warning to GasCalc — it should
+> flag when the diver's gas mix becomes unsafe past a certain depth."
+
+**Claude doesn't start editing.** First it checks for in-flight work and routes
+the request to the right staff:
+
+```
+$ homebase work status
+No active work-state.
+```
+
+It pulls in two specialists from `agents/`:
+
+- **`diving-product-manager`** — confirms scope: *is this in GasCalc's remit, and
+  what's the right UX for a safety warning?*
+- **`dive-science-advisor`** — the **final authority** on the physics. It
+  supplies the ppO₂ → MOD formula and the safe limits, and (per its charter) no
+  safety-critical feature ships without its sign-off.
+
+**Issue first — it files one, it doesn't ask you to.** Product work needs a
+tracked issue with acceptance criteria, so `technical-project-manager` (the sole
+Linear gatekeeper) creates it:
+
+```
+TFD-214  "GasCalc: warn when gas mix exceeds safe MOD"
+  ## Acceptance Criteria
+  - [ ] MOD computed from FO₂ and a configurable ppO₂ limit (default 1.4 bar)
+  - [ ] Warning shown on the results screen when planned depth > MOD
+  - [ ] Formula reviewed and signed off by dive-science-advisor
+```
+
+```
+$ env LINEAR_TPM_AUTHORIZED=1 homebase work start TFD-214
+✔ work-state created · branch tfd-214 · worktree .worktrees/tfd-214/
+✔ Linear TFD-214: Backlog → In Progress
+→ cd .worktrees/tfd-214
+```
+
+**The work happens.** `swift-architect` advises on where the calc lives; the
+warning gets implemented. Now a commit — and here a guardrail fires:
+
+```
+$ git commit -m "add MOD warning"
+✗ blocked (commit-msg hook): no issue trailer found.
+  Every commit must reference its issue: add `Refs TFD-214`.
+```
+
+So it commits the way the contract requires:
+
+```
+$ env HOMEBASE_WORK_AUTHORIZED=1 git commit -m "feat(gascalc): warn when planned depth exceeds MOD
+
+Compute MOD from FO₂ and a configurable ppO₂ limit; surface a
+results-screen warning when the planned depth is deeper than the mix
+allows.
+
+Refs TFD-214
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+✔ commit-sop-check · trailer OK · one issue scope OK
+```
+
+**Safety sign-off before close.** `dive-science-advisor` reviews the implemented
+formula against its reference values and confirms it's correct — that's the
+acceptance criterion that gates the feature.
+
+**Closing out runs every gate at once:**
+
+```
+$ env LINEAR_TPM_AUTHORIZED=1 HOMEBASE_WORK_AUTHORIZED=1 \
+    homebase work finish --append-closing
+✔ working tree clean
+✔ trailers valid · closing keyword present (Closes TFD-214)
+✔ required checks passed (build + tests)
+✔ rebased onto origin/main · fast-forward pushed
+✔ Linear TFD-214: In Progress → Done · worktree torn down
+```
+
+No unreferenced commit ever landed, no safety-critical change shipped without the
+domain authority's sign-off, and the session can't end with anything uncommitted
+or unpushed. That's the whole point: **the rails are the product.**
+
+---
+
+The same shape applies everywhere — `"let's fix the onboarding copy on
+StudioWeb"` pulls in `copywriter` + `web-frontend-architect`; `"bump ShopOS to
+v0.3 and deploy"` runs the release flow and the Kamal pipeline. Governance edits
+that don't need an issue take the lighter chore path
+(`homebase work chore "fix typo in SOP-001"`). You stay in plain language; the
+framework keeps the work tracked, reviewed, and reversible.
+
 ## Making it yours
 
 This release ships fictional example content. Before relying on it, replace:
