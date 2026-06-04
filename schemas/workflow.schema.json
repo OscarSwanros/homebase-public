@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/acme-co/homebase/main/schemas/workflow.schema.json",
+  "title": "Homebase Workflow Contract",
+  "description": "Schema for <project>/.homebase/workflow.yml. Declares the machine-readable workflow contract that `homebase work` enforces. Replaces SOP prose as the operative control plane. Per-project defaults; per-app overrides under apps[<slug>] (merge for objects, replace for arrays).",
+  "type": "object",
+  "required": ["version", "primary_tracker", "start_gates", "finish_gates", "hard_rules"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Schema version. The CLI refuses to run on unknown versions. Bumped on breaking changes; prior versions remain readable via a migration shim in scripts/lib/workflow-loader.sh."
+    },
+    "primary_tracker": {
+      "enum": ["linear", "github"],
+      "default": "linear",
+      "description": "Source of truth for issue identifiers. Linear is canonical per HOMEBASE-SOP-013; `github` is supported for projects that haven't adopted SOP-013."
+    },
+    "linear": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Linear workspace integration. Required when primary_tracker == linear.",
+      "properties": {
+        "state_kinds": {
+          "type": "object",
+          "required": ["backlog", "in_progress", "in_review", "done"],
+          "additionalProperties": false,
+          "description": "Maps the four canonical workflow phases to the Linear state names this project's team recognizes. State names are read live from Linear at command time; this map answers 'which Linear state is the in_progress one for this team?' Each list MUST contain at least one name; the CLI uses the first entry that exists in the live team-state list.",
+          "properties": {
+            "backlog":     { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+            "in_progress": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+            "in_review":   { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+            "done":        { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+          }
+        },
+        "required_labels_at_start": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Labels the issue MUST carry before `homebase work start` will accept it. Empty list disables the check."
+        }
+      }
+    },
+    "start_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Gates evaluated by `homebase work start` before recording work-state. Each gate is a boolean toggle; defaults are conservative (true) per HOMEBASE-SOP-001.",
+      "properties": {
+        "issue_required":                       { "type": "boolean", "default": true },
+        "issue_must_exist":                     { "type": "boolean", "default": true },
+        "issue_must_be_in_correct_project":     { "type": "boolean", "default": true,
+          "description": "Issue's Linear Project must equal the resolved app's apps[].roadmap.linear_project_id." },
+        "issue_must_have_acceptance_criteria":  { "type": "boolean", "default": true,
+          "description": "Issue body must contain a `## Acceptance Criteria` section with at least one `- [ ]` checkbox." },
+        "issue_must_have_required_labels":      { "type": "boolean", "default": true,
+          "description": "Honours linear.required_labels_at_start." },
+        "tree_must_be_clean":                   { "type": "boolean", "default": true },
+        "branch_must_be_main_or_clean":         { "type": "boolean", "default": true,
+          "description": "Working branch must be `branch.base` (default `main`), OR a clean feature branch with no diverged history." },
+        "plan_approval_required":               { "type": "boolean", "default": false,
+          "description": "When true, `work start` requires a recent plan-approval marker. Default off because Plan-mode approval is implicit per AUTONOMY_CHARTER §5." }
+      }
+    },
+    "finish_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Gates evaluated by `homebase work finish`. Each is a boolean toggle. The complete gate sequence is documented in standards/WORKFLOW_CONTRACT.md § Finish gates.",
+      "properties": {
+        "tree_must_be_clean":                  { "type": "boolean", "default": true },
+        "all_branch_commits_reference_issue":  { "type": "boolean", "default": true,
+          "description": "Every commit on the active branch (since branch.base) carries a trailer matching the active issue per scripts/lib/issue-trailer.sh." },
+        "last_commit_has_closing_keyword":     { "type": "boolean", "default": true,
+          "description": "Final commit uses Closes / Fixes / Resolves (not Refs)." },
+        "validate_command_must_pass":          { "type": "boolean", "default": true,
+          "description": "Runs each blocking required_checks[] entry with when=on_finish." },
+        "docs_validate_must_pass":             { "type": "boolean", "default": true,
+          "description": "Runs scripts/validate-docs.sh when any commit on the branch touched a `.md` file." },
+        "changelog_updated_for_feat_fix":      { "type": "boolean", "default": true,
+          "description": "Per-commit delegation to scripts/hooks/commit-changelog-check.sh." },
+        "ui_verification_present":             { "type": "boolean", "default": true,
+          "description": "Per-commit delegation to scripts/hooks/ui-verification-check.sh — UI commits require a Verified-* trailer." },
+        "apple_ui_xcuitest_required":          { "type": "boolean", "default": false,
+          "description": "When true, Apple-platform UI commits must carry `Verified by XCUITest:` or `UI verification waived:` (not bare `Verified on simulator:`/`Verified on device:`). See HOMEBASE-SOP-007 § Apple-platform Gate. Opt-in per Apple app." },
+        "branch_must_be_pushed":               { "type": "boolean", "default": true,
+          "description": "Reserved. As of HMB-22, finish lands work directly on main; this field is retained for back-compat parsing but no longer gates a separate push step." }
+      }
+    },
+    "release_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "HOMEBASE-SOP-005 phases as declarative gates, consumed by `homebase work ship`. Defaults assume web; mobile apps override store_metadata_must_be_localized + store_release_notes_must_exist.",
+      "properties": {
+        "changelog_unreleased_must_be_nonempty": { "type": "boolean", "default": true },
+        "version_bump_required":                 { "type": "boolean", "default": true },
+        "store_metadata_must_be_localized":      { "type": "boolean", "default": false },
+        "store_release_notes_must_exist":        { "type": "boolean", "default": false },
+        "tag_must_be_annotated":                 { "type": "boolean", "default": true },
+        "tag_format":                            {
+          "type": "string",
+          "default": "{app}/{platform}/{version}",
+          "description": "Tag template. Tokens: {app}, {platform}, {version}."
+        },
+        "linear_milestone_must_exist":           { "type": "boolean", "default": true,
+          "description": "Per HOMEBASE-SOP-013: a Linear Milestone matching `v<X.Y.Z>` must exist on the app's Project before ship." }
+      }
+    },
+    "required_agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Maps change-type predicates → required agent slugs. Agents must exist in homebase/agents/. Per-app overrides accumulate.",
+      "properties": {
+        "by_platform": {
+          "type": "object",
+          "description": "Keyed by platform tag (`ios`, `android`, `macos`, `web`, `go`, `cli`).",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+            "uniqueItems": true
+          }
+        },
+        "by_change_kind": {
+          "type": "object",
+          "description": "Keyed by change kind: `ui`, `safety_critical`, `copy`, `data_migration`, `architecture`, `release`, `governance`.",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+            "uniqueItems": true
+          }
+        },
+        "path_scoped": {
+          "type": "array",
+          "description": "Path-pattern → required agents. Walked top-to-bottom; the first matching pattern's `by_change_kind` wins for that path. Falls through to top-level by_change_kind otherwise. Used for content-vs-code splits (e.g. acme-co blog content routes to acme-co-*-reviewers; non-content code routes to web-frontend-architect).",
+          "items": {
+            "type": "object",
+            "required": ["paths", "by_change_kind"],
+            "additionalProperties": false,
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "minItems": 1,
+                "description": "Glob patterns relative to the project root."
+              },
+              "by_change_kind": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+                  "uniqueItems": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "required_checks": {
+      "type": "array",
+      "description": "Project-level named checks. Each is a {name, command, when, blocking, min_interval} entry. Per-app overrides REPLACE the array.",
+      "items": {
+        "type": "object",
+        "required": ["name", "command"],
+        "additionalProperties": false,
+        "properties": {
+          "name":    { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+          "command": { "type": "string", "minLength": 1 },
+          "when":    {
+            "enum": ["always", "on_finish", "on_ship", "on_ui_change", "on_safety_critical_change"],
+            "default": "on_finish"
+          },
+          "blocking": { "type": "boolean", "default": true },
+          "min_interval": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Minimum seconds between consecutive runs of this check (per session). Used to throttle expensive suites; a check skipped due to throttle is treated as passing if a successful run exists within the window."
+          },
+          "paths": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "Optional glob array. When present, the check runs only when at least one path in the diff (state.base_sha..HEAD) matches at least one glob; otherwise it's skipped with reason. Use for platform-scoped checks: an iOS-only commit on a multi-platform app skips the Android validate. When absent, the check always runs (current default behaviour)."
+          }
+        }
+      }
+    },
+    "branch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "base":            { "type": "string", "default": "main" },
+        "naming_pattern":  {
+          "type": "string",
+          "default": "{scope}/{issue}-{slug}",
+          "description": "Branch-name template. Tokens: {scope} (defaults to app slug), {issue} (issue number), {slug} (slugified issue title), {app}, {platform}."
+        },
+        "auto_create":     { "type": "boolean", "default": true,
+          "description": "When true, `homebase work start` calls `git switch -c` automatically." },
+        "single_commit_to_main_allowed": { "type": "boolean", "default": true,
+          "description": "Per HOMEBASE-SOP-001 §B6: trivial single-commit work may target `branch.base` directly." }
+      }
+    },
+    "hard_rules": {
+      "type": "array",
+      "description": "Named hard rules adopted by this project. Slugs map to entries in governance/HARD_RULES.yml; render-claudemd joins them when rendering the project's `<!-- BEGIN homebase:hard-rules -->` section. Adding a new slug requires updating this enum AND governance/HARD_RULES.yml.",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "gh_via_tpm",
+          "linear_via_tpm",
+          "linear_issue_creation_requires_ac",
+          "no_no_verify",
+          "issue_first",
+          "one_issue_per_commit_scope",
+          "trailer_keywords_only",
+          "commit_must_close_issue_at_end",
+          "no_uncommitted_at_session_end",
+          "ui_verification_mandatory",
+          "apple_ui_verification_xcuitest",
+          "changelog_required_on_app_commits",
+          "architect_mandatory_for_code",
+          "customer_context_mandatory",
+          "brand_context_mandatory",
+          "failure_state_data_preservation",
+          "apple_docs_via_sosumi",
+          "diveshopos_test_throttle",
+          "clickable_issue_refs",
+          "xcodebuild_via_mcp_cli"
+        ]
+      }
+    },
+    "session_end": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Composes with the Claude Code TaskCompleted hook (scripts/hooks/task-completed.sh).",
+      "properties": {
+        "require_homebase_work_finish": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, task-completed.sh blocks Claude Code task completion unless .homebase/work-state.json shows a successful `homebase work finish` for the active issue."
+        }
+      }
+    },
+    "apps": {
+      "type": "object",
+      "description": "Per-app overrides. Keys are app slugs from .homebase/project.yml. Each value is the same shape as the top-level minus `version` and `apps`. Merge semantics: deep-merge for objects, REPLACE for arrays. Field-level merging is documented in standards/WORKFLOW_CONTRACT.md § Per-app overrides.",
+      "additionalProperties": {
+        "$ref": "#/$defs/app_workflow_override"
+      },
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._-]*$" }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form prose for human readers. Ignored by the CLI."
+    }
+  },
+  "$defs": {
+    "app_workflow_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-app override block. Same shape as the top-level minus `version` and `apps`. Includes `hard_rules` so an app can opt into rules its parent project doesn't adopt project-wide.",
+      "properties": {
+        "primary_tracker": { "$ref": "#/properties/primary_tracker" },
+        "linear":          { "$ref": "#/properties/linear" },
+        "start_gates":     { "$ref": "#/properties/start_gates" },
+        "finish_gates":    { "$ref": "#/properties/finish_gates" },
+        "release_gates":   { "$ref": "#/properties/release_gates" },
+        "required_agents": { "$ref": "#/properties/required_agents" },
+        "required_checks": { "$ref": "#/properties/required_checks" },
+        "branch":          { "$ref": "#/properties/branch" },
+        "hard_rules":      { "$ref": "#/properties/hard_rules" },
+        "session_end":     { "$ref": "#/properties/session_end" },
+        "notes":           { "$ref": "#/properties/notes" }
+      }
+    }
+  }
+}

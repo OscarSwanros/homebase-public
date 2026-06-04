@@ -1,0 +1,32 @@
+# Customers
+
+This project builds apps for specific personas. Each persona has its own directory with research, profile, and thinking-pattern artifacts that agents consult during feature work.
+
+## Customer-to-App Mapping
+
+| Persona | Directory | Type | Apps | Notes |
+|---|---|---|---|---|
+| {persona-name} | `{persona-slug}/` | Real / Archetype | {app1}, {app2} | {short context} |
+
+Replace the row above with your actual personas. Use `Real` for named individuals, `Archetype` for composites synthesized from multiple sources.
+
+## Structure
+
+Each persona directory contains:
+
+| File | Purpose |
+|---|---|
+| `PROFILE.md` | Who they are — identity, professional context, relationship to technology |
+| `THINKING_PATTERNS.md` | How they think — 6-category analysis (mental models, pain patterns, decision heuristics, emotional landscape, language patterns, workflow observations) |
+| `apps.md` | Which apps are built for them and why |
+| `research/` | Dated raw artifacts — interview transcripts, observation notes, analysis, hypothesis |
+
+## How Agents Use This
+
+Before designing or building a feature, agents consult:
+
+1. **PROFILE.md** — who the customer is.
+2. **THINKING_PATTERNS.md** — how they think, decide, and work.
+3. **research/** — raw observations when deeper context is needed.
+
+See `~/code/homebase/sops/HOMEBASE-SOP-011-CUSTOMER_RESEARCH.md` for governance and `~/code/homebase/governance/RESEARCH_STANDARDS.md` for artifact standards.

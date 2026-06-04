@@ -1,0 +1,71 @@
+name: Commit SOP Check (homebase)
+
+# Reusable workflow — invoked by project repos to validate every commit
+# in a push/PR against HOMEBASE-SOP-001 trailer and issue-reference rules.
+#
+#   jobs:
+#     commit-sop-check:
+#       uses: acme-co/homebase/.github/workflows/commit-sop-check.yml@<sha>
+#
+# Complements the local git commit-msg hook: catches any commit that
+# reached the remote without running the hook (e.g. pushed from a host
+# that hasn't run `bin/homebase link-project`).
+
+on:
+  workflow_call:
+    inputs:
+      homebase-ref:
+        description: "Homebase ref to check out."
+        required: false
+        default: "main"
+        type: string
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repo (full history for PR diffs)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out homebase
+        uses: actions/checkout@v4
+        with:
+          repository: acme-co/homebase
+          ref: ${{ inputs.homebase-ref }}
+          path: .homebase-checkout
+
+      - name: Determine commit range
+        id: range
+        run: |
+          # For push events: check the commits being pushed (base..head).
+          # For pull_request events: check the PR's commits relative to base.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          else
+            # First push to a new branch — check last 20 commits as a sane default.
+            BASE="$(git rev-parse HEAD~20 2>/dev/null || git rev-list --max-parents=0 HEAD | head -1)"
+            HEAD="${{ github.sha }}"
+          fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+          echo "Checking commits ${BASE}..${HEAD}"
+
+      - name: Validate each commit message
+        run: |
+          CHECK=".homebase-checkout/scripts/hooks/commit-sop-check.sh"
+          chmod +x "$CHECK"
+          FAILED=0
+          for sha in $(git log --format=%H "${{ steps.range.outputs.base }}..${{ steps.range.outputs.head }}"); do
+            MSG=$(git log -1 --format=%B "$sha")
+            if ! printf '%s' "$MSG" | "$CHECK"; then
+              echo "::error::Commit $sha violates HOMEBASE-SOP-001"
+              FAILED=1
+            fi
+          done
+          exit $FAILED

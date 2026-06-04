@@ -1,0 +1,58 @@
+name: CLAUDE.md Drift (homebase)
+
+# Reusable workflow — invoked by project repos via:
+#
+#   jobs:
+#     render-claudemd-drift:
+#       uses: acme-co/homebase/.github/workflows/render-claudemd-drift.yml@<sha>
+#
+# Asserts that <project-path>/CLAUDE.md is in sync with .homebase/workflow.yml
+# (after `bin/homebase render-claudemd <project-path>`). Non-zero exit on
+# drift; operators must commit the regeneration before merging.
+#
+# Standard: ~/code/homebase/standards/WORKFLOW_CONTRACT.md § Generation
+#           pipeline. Schema: schemas/workflow.schema.json.
+
+on:
+  workflow_call:
+    inputs:
+      homebase-ref:
+        description: "Homebase ref to check out (branch, tag, or SHA). Defaults to main."
+        required: false
+        default: "main"
+        type: string
+      project-path:
+        description: "Path to the project root inside the caller repo. Defaults to '.'."
+        required: false
+        default: "."
+        type: string
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repo
+        uses: actions/checkout@v4
+
+      - name: Check out homebase
+        uses: actions/checkout@v4
+        with:
+          repository: acme-co/homebase
+          ref: ${{ inputs.homebase-ref }}
+          path: .homebase-checkout
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Render CLAUDE.md and check drift
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$PROJECT_PATH/.homebase/workflow.yml" ]]; then
+            echo "::notice::no workflow.yml at $PROJECT_PATH/.homebase/ — drift check skipped"
+            exit 0
+          fi
+          ruby .homebase-checkout/scripts/render-claudemd.rb "$PROJECT_PATH" --check

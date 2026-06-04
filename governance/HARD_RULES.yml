@@ -1,0 +1,164 @@
+# governance/HARD_RULES.yml — registry of every hard rule a project may adopt.
+#
+# Each entry maps a stable slug to its display data. Project workflow.yml files
+# select which rules apply via `hard_rules[]`; the schema enum at
+# `schemas/workflow.schema.json#/properties/hard_rules/items/enum` must stay in
+# sync with the keys here.
+#
+# Adding a rule requires three coordinated edits:
+#   1. Add an entry to this file (number, short, body, enforced_by, sop).
+#   2. Add the slug to the schema enum (workflow.schema.json).
+#   3. Add the slug to each adopting project's `.homebase/workflow.yml`
+#      under `hard_rules:` and re-run `bin/homebase render-claudemd`.
+#
+# `bin/homebase render-claudemd` joins each project's adopted slugs against
+# this registry, sorts by `number`, and renders the `<!-- BEGIN homebase:hard-rules -->`
+# section of that project's root CLAUDE.md.
+#
+# Body prose should be one or two sentences, declarative, and reference the
+# enforcement mechanism by file path so a reader can trace from rule to gate
+# to SOP without hunting.
+
+gh_via_tpm:
+  number: 1
+  short: "GitHub API gatekeeper"
+  body: "Only `technical-project-manager` runs `gh` CLI commands. All other agents return structured GitHub requests for TPM to execute."
+  enforced_by: "scripts/hooks/gh-cli-guard-hook.sh"
+  sop: "HOMEBASE-SOP-002"
+
+linear_via_tpm:
+  number: 2
+  short: "Linear API gatekeeper"
+  body: "Only `technical-project-manager` mutates Linear (issues, projects, milestones). Read-only verbs (`homebase roadmap render|audit|portfolio`) are allowed for any agent."
+  enforced_by: "scripts/hooks/linear-cli-guard-hook.sh"
+  sop: "HOMEBASE-SOP-013"
+
+linear_issue_creation_requires_ac:
+  number: 2.1
+  short: "New Linear issues require Acceptance Criteria"
+  body: "Every issue created via `mcp__plugin_linear_linear__save_issue` (calls without `id`) must carry a `## Acceptance Criteria` section with at least one `- [ ]` checkbox before the create-gate accepts it. Updates (`id` present) pass through so backfill into existing issues remains possible. The create-gate reuses the same regex pair as the `homebase work start` start-gate (`scripts/lib/ac-regex.sh`), so the two gates can never drift."
+  enforced_by: "scripts/hooks/linear-cli-guard-hook.sh, scripts/lib/ac-regex.sh"
+  sop: "HOMEBASE-SOP-001"
+
+no_no_verify:
+  number: 3
+  short: "No commit-bypass flags"
+  body: "`git commit --no-verify` and `-n` are forbidden. The commit-msg hook is the canonical commit-policy gate; bypassing it is a violation."
+  enforced_by: "scripts/hooks/claude-precommit.sh"
+  sop: "HOMEBASE-SOP-001"
+
+issue_first:
+  number: 4
+  short: "Issue-first workflow"
+  body: "Every code change starts with a tracked issue (Linear `KEY-N` or GitHub `#N`). `homebase work start <KEY>` is the only legal start path; commits without an issue trailer are rejected by the commit-msg hook."
+  enforced_by: "scripts/hooks/work-cli-guard-hook.sh, scripts/hooks/commit-sop-check.sh"
+  sop: "HOMEBASE-SOP-001"
+
+one_issue_per_commit_scope:
+  number: 5
+  short: "One issue per commit scope"
+  body: "Each commit references exactly one tracked issue in its trailer. Cross-issue work splits across commits; mixed-issue commits are rejected at finish-time."
+  enforced_by: "scripts/work/finish.sh (gate 4)"
+  sop: "HOMEBASE-SOP-001"
+
+trailer_keywords_only:
+  number: 6
+  short: "Canonical trailer keywords"
+  body: "Issue-reference trailers use only `Refs`, `Closes`, `Fixes`, `Resolves` (and case variants). Anti-patterns like `Part of`, `Related to`, `See`, `References` read correctly to humans but do not trigger auto-close — they are rejected."
+  enforced_by: "scripts/lib/issue-trailer.sh, scripts/hooks/commit-sop-check.sh"
+  sop: "HOMEBASE-SOP-001"
+
+commit_must_close_issue_at_end:
+  number: 7
+  short: "Closing keyword on the final commit"
+  body: "The last commit on a work branch carries `Closes` / `Fixes` / `Resolves` (not `Refs`). `homebase work finish` validates this before pushing."
+  enforced_by: "scripts/work/finish.sh (gate 5), scripts/hooks/pre-push.sh"
+  sop: "HOMEBASE-SOP-001"
+
+changelog_required_on_app_commits:
+  number: 7.1
+  short: "CHANGELOG entry on app commits"
+  body: "Commits that touch a single app's source tree (under `apps/<app>/`) and use either a Conventional-Commits subject (`feat(<app>):` / `fix(<app>):`) or a Linear-key subject (`<KEY>: <title>`) MUST stage that app's `CHANGELOG.md` with a new entry under `## [Unreleased]`. Internal commits that genuinely have no user-visible effect can opt out via a `Changelog skipped: <reason>` trailer (audited by TPM). Multi-app or no-app commits are exempt."
+  enforced_by: "scripts/hooks/commit-changelog-check.sh"
+  sop: "HOMEBASE-SOP-001"
+
+no_uncommitted_at_session_end:
+  number: 8
+  short: "No uncommitted work at session end"
+  body: "A Claude Code session may not end with uncommitted changes or unpushed commits. `task-completed.sh` blocks completion until the working tree is clean and pushed."
+  enforced_by: "scripts/hooks/task-completed.sh, scripts/hooks/teammate-idle.sh"
+  sop: "HOMEBASE-SOP-001"
+
+ui_verification_mandatory:
+  number: 9
+  short: "UI verification trailer"
+  body: "Commits touching UI-rendered files (templates, stylesheets, view code) carry a `Verified in browser:` (web), `Verified by XCUITest:` (Apple), or `Verified on simulator:` (Android) trailer. Per-app opt-out is declared in workflow.yml."
+  enforced_by: "scripts/hooks/ui-verification-check.sh, scripts/work/finish.sh (gate 9)"
+  sop: "HOMEBASE-SOP-007"
+
+apple_ui_verification_xcuitest:
+  number: 9.1
+  short: "Apple UI gate is XCUITest"
+  body: "On Apple platforms (iOS / iPadOS / macOS / visionOS / watchOS), UI commits must be certified by a passing XCUITest and carry a `Verified by XCUITest: <test — destination>` trailer. `Verified on simulator:` and `Verified on device:` are supplementary, not gate-satisfying. The waiver clause (`UI verification waived:`) is one-off, requires citing a reference component and a follow-up issue. Opt-in per Apple app via `finish_gates.apple_ui_xcuitest_required: true` in workflow.yml."
+  enforced_by: "scripts/hooks/ui-verification-check.sh, scripts/work/finish.sh (gate 9 — strict mode when finish_gates.apple_ui_xcuitest_required is true)"
+  sop: "HOMEBASE-SOP-007"
+
+architect_mandatory_for_code:
+  number: 10
+  short: "Architect consultation for code"
+  body: "Any non-trivial code change consults the relevant architect agent (`swift-architect`, `rails-architect`, `go-architect`, `kotlin-systems-architect`, `web-frontend-architect`). The contract's `required_agents.by_platform` declares which architect maps to which platform per app."
+  enforced_by: "workflow.yml `required_agents.by_platform`; advisory at finish-time."
+  sop: "HOMEBASE-SOP-001"
+
+customer_context_mandatory:
+  number: 11
+  short: "Customer context for product work"
+  body: "Product work consults the relevant customer context (persona profiles in `Customers/`) before designing the change. Applies only to projects that have adopted SOP-011."
+  enforced_by: "Project policy; advisory."
+  sop: "HOMEBASE-SOP-011"
+
+brand_context_mandatory:
+  number: 12
+  short: "Brand context for user-facing work"
+  body: "User-facing changes (copy, UI, marketing) consult the brand voice and visual identity for the affected brand. Applies only in multi-brand monorepos (e.g. studio)."
+  enforced_by: "Project policy; advisory."
+  sop: "HOMEBASE-SOP-009"
+
+failure_state_data_preservation:
+  number: 13
+  short: "Save before retry on failure states"
+  body: "Failure-state UI (Retry / Discard / similar) saves the user's data before destructive actions become available. The backing model preserves whatever the user has produced even when the pipeline cannot complete."
+  enforced_by: "Architectural review at design time."
+  sop: "HOMEBASE-SOP-008"
+
+apple_docs_via_sosumi:
+  number: 14
+  short: "Apple documentation via Sosumi"
+  body: "When fetching Apple developer documentation, route through the Sosumi MCP rather than a direct browser fetch. Avoids CORS / rate-limit surprises and keeps the citation surface consistent."
+  enforced_by: "Agent convention; advisory."
+  sop: "HOMEBASE-SOP-010"
+
+diveshopos_test_throttle:
+  number: 15
+  short: "ShopOS test-suite throttle"
+  body: "ShopOS's full Rails test suite is slow; do not run it more than once per hour during a session unless results are needed for a finish gate. Faster targeted tests are unrestricted."
+  enforced_by: "Project convention; declared as `apps[shopos].workflow.required_checks[].min_interval`."
+  sop: "Project-specific (field-suite)"
+
+clickable_issue_refs:
+  number: 16
+  short: "Clickable issue references in conversation"
+  body: "When citing an issue in agent output (logs, summaries, conversation), include the issue URL once so the operator can click through. The trailer regex covers the commit form; conversation form is operator-facing."
+  enforced_by: "Agent convention; advisory."
+  sop: "Project-specific (field-suite)"
+
+xcodebuild_via_mcp_cli:
+  number: 17
+  short: "Apple toolchain wrapper"
+  body: "Raw `xcodebuild`, `xcrun simctl`, and bare `simctl` invocations are prohibited. All Apple-platform build/test/run/sim/UI-automation goes through the `xcodebuildmcp` CLI (vendored skill at `skills/xcodebuildmcp-cli/`, pinned in `.homebase/dependencies.yml`). Escape hatch: `XCODEBUILDMCP_AUTHORIZED=1` for one-off cases xcodebuildmcp doesn't cover, captured at Claude fork time (set via .claude/settings.local.json `env` block + relaunch; inline env-var prefix and mid-session `export` do NOT work)."
+  enforced_by: "scripts/hooks/xcodebuild-cli-guard-hook.sh"
+  sop: "HOMEBASE-SOP-015"
+
+# Self-hosted: ~/code/homebase/.homebase/workflow.yml adopts a subset of these
+# rules (see Phase 4 of the workflow-contract migration; HMB-9). The CI in
+# .github/workflows/test-work-cli.yml exercises the CLI on every PR.

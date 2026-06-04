@@ -1,0 +1,63 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Claude Code — ignore local state, but track the canonical settings.json
+# that projects symlink to, plus the canonical user-level user-settings.json
+# that ~/.claude/settings.json symlinks to (HMB-50), plus the recurring-tasks
+# manifest that /audit-governance writes back to.
+.claude/*
+!.claude/settings.json
+!.claude/user-settings.json
+!.claude/recurring-tasks.json
+*.log
+
+# Test artifacts
+tmp/
+
+# Homebase work-state (session-local; never committed).
+# Phase 4 of the workflow-contract migration: homebase eats its own dog
+# food, so it has its own .homebase/ directory now.
+.homebase/work-state.json
+.homebase/work-state.json.lock
+# HMB-87 B.11: SHA-keyed per-worktree state files at the main checkout's
+# .homebase/ — one per active worktree, plus their .lock siblings.
+.homebase/work-state.*.json
+.homebase/work-state.*.json.lock
+.homebase/work-state.audit.log
+.homebase/work-finish-*.log
+.homebase/.pr-number
+.homebase/.work-env
+# `homebase register` writes .homebase/manifest.json on every link/register
+# pass to record the symlink set + homebase HEAD SHA at link time. The
+# value is per-machine state (changes every time HEAD or symlinks move),
+# never canon — gitignore it so homebase's own bootstrap step 4 stays
+# clean (HMB-62).
+.homebase/manifest.json
+
+# Worktree mode (HMB-27): per-task git worktrees materialise under
+# .worktrees/. They're a generated working area, not source. Without
+# this entry, every active homebase work-state shows up as `?? .worktrees/`
+# in `git status`, blocking task-completed.sh from clearing unrelated
+# tasks in cross-project sessions. (HMB-38.)
+.worktrees/
+
+# HMB-60: `xcodebuildmcp init` drops an AGENTS.md stub at the repo root on
+# every run. Alien to homebase's CLAUDE.md convention — the file is never
+# tracked here or in any homebase-adopting project. The companion precommit
+# guard in scripts/hooks/claude-precommit.sh rejects any explicit
+# `git add -f AGENTS.md`.
+AGENTS.md
+
+# Stray app dev-databases occasionally land here when an agent runs an
+# app command (e.g. briefing) with the wrong working directory. homebase is a
+# governance repo and never stores a runtime DB. (HMB-127)
+data/

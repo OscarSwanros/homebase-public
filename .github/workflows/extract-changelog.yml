@@ -1,0 +1,82 @@
+name: Extract Changelog (homebase)
+
+# Reusable workflow — invoked by project repos to extract a version's
+# changelog section (commonly during release workflows that publish a
+# GitHub Release body or tag message).
+#
+#   jobs:
+#     extract:
+#       uses: acme-co/homebase/.github/workflows/extract-changelog.yml@<sha>
+#       with:
+#         app: gascalc
+#         version: 1.0.0
+#         platform: ios
+#
+# Requires the caller repo to ship .homebase/changelogs.conf with a
+# `resolve_changelog_path` function (unless changelog-path is passed directly).
+# The extracted text is emitted as the `changelog` output.
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: "App slug (required unless changelog-path is provided)."
+        required: false
+        type: string
+      version:
+        description: "Version being released (SemVer)."
+        required: true
+        type: string
+      platform:
+        description: "Platform: ios, android, or web. Only used in resolver form."
+        required: false
+        default: "ios"
+        type: string
+      changelog-path:
+        description: "Direct path to the CHANGELOG.md relative to the caller repo root. If set, app/platform are ignored."
+        required: false
+        type: string
+      homebase-ref:
+        description: "Homebase ref to check out."
+        required: false
+        default: "main"
+        type: string
+    outputs:
+      changelog:
+        description: "The extracted changelog section."
+        value: ${{ jobs.extract.outputs.changelog }}
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    outputs:
+      changelog: ${{ steps.extract.outputs.changelog }}
+    steps:
+      - name: Check out caller repo
+        uses: actions/checkout@v4
+
+      - name: Check out homebase
+        uses: actions/checkout@v4
+        with:
+          repository: acme-co/homebase
+          ref: ${{ inputs.homebase-ref }}
+          path: .homebase-checkout
+
+      - name: Stage extractor
+        run: |
+          cp .homebase-checkout/scripts/extract-changelog.sh scripts/extract-changelog.sh
+          chmod +x scripts/extract-changelog.sh
+
+      - name: Extract
+        id: extract
+        run: |
+          if [ -n "${{ inputs.changelog-path }}" ]; then
+            OUT=$(./scripts/extract-changelog.sh "${{ inputs.changelog-path }}" "${{ inputs.version }}")
+          else
+            OUT=$(./scripts/extract-changelog.sh "${{ inputs.app }}" "${{ inputs.version }}" "${{ inputs.platform }}")
+          fi
+          {
+            echo 'changelog<<CHANGELOG_EOF'
+            echo "$OUT"
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"

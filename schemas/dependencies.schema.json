@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/acme-co/homebase/main/schemas/dependencies.schema.json",
+  "title": "Homebase Dependency Manifest",
+  "description": "Schema for <homebase>/.homebase/dependencies.yml. Pins third-party CLI dependencies homebase governs (initially xcodebuildmcp). Bootstrap installs the pinned versions and FAILS on any drift — installed binary version mismatch, missing vendored content, or content drift against upstream-for-pinned-version.",
+  "type": "object",
+  "required": ["schema_version", "dependencies"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Schema version. The CLI refuses to run on unknown versions."
+    },
+    "dependencies": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Map of dependency name to its pin + install + vendored-content metadata. The dependency name is the canonical CLI name (e.g. `xcodebuildmcp`).",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["version", "install"],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+            "description": "Exact semver pin. Bootstrap fails if the installed binary reports a different version."
+          },
+          "install": {
+            "type": "object",
+            "description": "How bootstrap installs the dependency on a fresh Mac. Currently only Homebrew is supported.",
+            "additionalProperties": false,
+            "properties": {
+              "brew_tap": {
+                "type": "string",
+                "description": "Optional brew tap (e.g. `getsentry/xcodebuildmcp`) added before `brew install`. Omit if the formula lives in homebrew-core."
+              },
+              "brew_formula": {
+                "type": "string",
+                "description": "Brew formula name. Required for any install spec."
+              }
+            },
+            "required": ["brew_formula"]
+          },
+          "vendored": {
+            "type": "array",
+            "description": "Files copied from the installed dependency into homebase for governance. Bootstrap diffs each vendored file against its `upstream_path` and fails on drift.",
+            "items": {
+              "type": "object",
+              "required": ["source", "upstream_path"],
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Path relative to the homebase root (e.g. `skills/xcodebuildmcp-cli/SKILL.md`)."
+                },
+                "upstream_path": {
+                  "type": "string",
+                  "description": "Absolute path to the upstream-installed copy. Supports `{version}` as a placeholder for the dependency's pinned version (e.g. `/opt/homebrew/Cellar/xcodebuildmcp/{version}/libexec/skills/xcodebuildmcp-cli/SKILL.md`)."
+                }
+              }
+            }
+          },
+          "enforced_by": {
+            "type": "array",
+            "description": "Filenames (relative to homebase root) of the scripts/hooks/SOPs that enforce this dependency's usage rules. Documentation only — not consumed at runtime; serves as a back-reference for governance audits.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sop": {
+            "type": "string",
+            "pattern": "^HOMEBASE-SOP-[0-9]{3}$",
+            "description": "Stable SOP slug (e.g. `HOMEBASE-SOP-015`) anchoring the rationale for this dependency. Matches the slug pattern used by HARD_RULES.yml."
+          }
+        }
+      }
+    }
+  }
+}

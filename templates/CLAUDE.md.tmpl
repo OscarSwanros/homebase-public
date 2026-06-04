@@ -1,0 +1,88 @@
+# {{PROJECT_DISPLAY_NAME}}
+
+{{PROJECT_DESCRIPTION_ONE_PARAGRAPH}}
+
+## Project Shape
+
+{{PROJECT_KIND_DESCRIPTION}}
+<!--
+  For a monorepo: "Monorepo containing N apps. Brand architecture: {brand-list-or-none}."
+  For a single-app: "Single-app project — domain {domain1, domain2}."
+-->
+
+Source of truth for apps, brands, and roadmap state: `.homebase/project.yml`.
+
+## Adopted SOPs
+
+This project adopts the homebase SOPs marked below. Each `@`-ref is resolved by Claude Code at session time. Drop unused rows; do not paraphrase the SOPs here.
+
+- @~/code/homebase/sops/HOMEBASE-SOP-001-DEVELOPMENT_WORKFLOW.md — issue-first rule, commit format, trailer keywords.
+- @~/code/homebase/sops/HOMEBASE-SOP-002-GITHUB_API_USAGE.md — TPM as `gh` CLI gatekeeper.
+- @~/code/homebase/sops/HOMEBASE-SOP-003-DOCUMENTATION_GOVERNANCE.md — file placement, naming, CLAUDE.md line budget (≤ 250 lines).
+- @~/code/homebase/sops/HOMEBASE-SOP-005-RELEASE_PROCESS.md — release process (per-platform).
+- @~/code/homebase/sops/HOMEBASE-SOP-006-HOTFIX_PROCESS.md — P0 emergency release path.
+- @~/code/homebase/sops/HOMEBASE-SOP-007-UI_VERIFICATION.md — render-and-observe gate (UI-bearing apps only).
+- @~/code/homebase/sops/HOMEBASE-SOP-008-FAILURE_STATE_DATA_PRESERVATION.md — save-before-retry rule.
+- @~/code/homebase/sops/HOMEBASE-SOP-009-NEW_APP_ONBOARDING.md — onboarding checklist for adding a new app.
+- @~/code/homebase/sops/HOMEBASE-SOP-010-HIG_COMPLIANCE.md — Apple HIG (iOS/macOS apps only).
+- @~/code/homebase/sops/HOMEBASE-SOP-011-CUSTOMER_RESEARCH.md — `Customers/` directory + research artifacts (opt-in).
+- @~/code/homebase/sops/HOMEBASE-SOP-013-ROADMAP_MANAGEMENT.md — Linear roadmap substrate (default-on; opt out per app via `roadmap.enabled: false`).
+- @~/code/homebase/sops/HOMEBASE-SOP-014-MACHINE_MIGRATION.md — new-machine setup runbook.
+
+## Standards Adopted
+
+Cross-project technical references. Pick the rows that apply.
+
+- @~/code/homebase/standards/SENTRY.md — canonical Sentry org `studio` for every Sentry id, URL, and CLI invocation.
+- @~/code/homebase/standards/LOGGING.md — four-signal model (errors / spans / metrics / logs); per-platform rules.
+- @~/code/homebase/standards/LINEAR_WORKSPACE.md — canonical Linear workspace topology (paired with SOP-013).
+- @~/code/homebase/standards/RAILS_PLAYBOOK.md — Rails 8 + SQLite + Kamal stack reference (Rails apps only).
+
+## Brands
+
+<!--
+  Only for brand-architected monorepos. Otherwise delete this section and `brands:` from project.yml.
+  One bullet per brand: id — display name — one-line audience.
+-->
+
+- {{BRAND_ID}} — {{BRAND_DISPLAY_NAME}} — {{BRAND_AUDIENCE}}
+
+## Apps
+
+| App | Path | Platforms | Status | {{BRAND_COL_OR_DROP}} | Summary |
+|---|---|---|---|---|---|
+| {{APP_NAME}} | {{APP_PATH}} | {{APP_PLATFORMS}} | {{APP_STATUS}} | {{APP_BRAND}} | {{APP_SUMMARY}} |
+
+For deeper context, open the app's own `CLAUDE.md` at its path.
+
+## Project-Specific Agents
+
+<!--
+  Project-scoped agents live in `<project>/.claude/agents/` and override homebase agents of the same name.
+  List them here so collaborators know which staff are local. Delete this section if there are none.
+-->
+
+- {{PROJECT_AGENT_NAME}} — {{PROJECT_AGENT_ONE_LINE_SCOPE}}
+
+## Canonical Files (project-local)
+
+Edits to any of the following affect every contributor working on this project. Do not edit casually.
+
+- `.homebase/project.yml` — registry source of truth (apps, brands, roadmap config).
+- `.claude/settings.json` — symlinked to homebase canonical settings; do not hand-edit. Project overlays go in `.claude/settings.local.json`.
+- `Documentation/ISSUE_CONVENTIONS.md` — concrete scope prefixes and label taxonomy (per @~/code/homebase/governance/ISSUE_CONVENTIONS_SKELETON.md).
+- `recurring-tasks.json` — scheduled audits / reviews owned at the project level.
+- {{ADDITIONAL_PROJECT_LOCAL_CANONICAL_FILES}}
+
+## Using Homebase in This Project
+
+1. From homebase root: `bin/homebase link-project {{PROJECT_PATH}}` (idempotent).
+2. Verify: `bin/homebase status {{PROJECT_PATH}}` — expect every symlink listed.
+3. Fill `{{PROJECT_PATH}}/.homebase/project.yml`, then re-run `bin/homebase index` from homebase to refresh `registry/PROJECTS.md`.
+
+## Scratch / Notes
+
+<!--
+  Optional: project-specific notes that don't fit elsewhere — current focus, open architectural questions,
+  decisions log links. Keep brief; long-form docs live in `Documentation/`.
+-->

@@ -1,0 +1,1475 @@
+#!/usr/bin/env bash
+# homebase — distribution CLI for ~/code/homebase
+#
+# Verbs:
+#   link                         Symlink ~/.claude/{agents,skills,statusline-command.sh,agent-signal.sh,settings.json} → homebase
+#   link-project <project>       Create project-level symlinks into the given project
+#   migrate <project>            Idempotent one-shot: replace vendored copies with symlinks
+#   status <project>             Verify every expected symlink in the project points to homebase
+#   bootstrap                    First-run on a new machine: link + walk every registered project (SOP-014)
+#   sync <project>               DEPRECATED — prints guidance to run link-project / migrate instead
+#   register <project>           Add a project to the registry without symlinking
+#   index [--check]              Regenerate registry/PROJECTS.md from each project's project.yml
+#   list                         Print registry/PROJECTS.md to stdout
+#   deploy <app> <env>           Deploy an app via Kamal — 12-phase pipeline (see Rails Playbook)
+#   rollback <app> <env>         Roll an app back to a prior version via `kamal rollback`
+#   settings <sub>               Manage portable user-level Claude Code settings (HMB-50)
+#   roster                       List agents in the staff roster
+#   sops                         List canonical SOPs (HOMEBASE-SOP-*)
+#   help                         Show this help
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOMEBASE="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Colour codes (bail to empty if NO_COLOR is set or stdout isn't a tty)
+if [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; then
+  C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_BOLD="" C_RESET=""
+else
+  C_RED=$'\033[0;31m'
+  C_GREEN=$'\033[0;32m'
+  C_YELLOW=$'\033[0;33m'
+  C_BLUE=$'\033[0;34m'
+  C_BOLD=$'\033[1m'
+  C_RESET=$'\033[0m'
+fi
+
+err()   { echo "${C_RED}error:${C_RESET} $*" >&2; }
+warn()  { echo "${C_YELLOW}warn:${C_RESET}  $*" >&2; }
+info()  { echo "${C_BLUE}info:${C_RESET}  $*"; }
+ok()    { echo "${C_GREEN}ok:${C_RESET}    $*"; }
+
+usage() {
+  cat <<EOF
+${C_BOLD}homebase${C_RESET} — distribution CLI for your governance source of truth.
+
+${C_BOLD}Usage:${C_RESET}
+  homebase <verb> [args]
+
+${C_BOLD}Verbs:${C_RESET}
+  link                         Symlink ~/.claude/{agents,skills,statusline-command.sh,agent-signal.sh,settings.json} → homebase
+  link-project <project-path>  Create project-level symlinks (hooks, scripts, settings)
+  migrate <project-path>       Idempotent: replace vendored copies with symlinks
+  status <project-path>        Verify every expected symlink points to homebase
+  bootstrap                    First-run on a new machine: link + walk every project (SOP-014)
+  sync <project-path>          DEPRECATED — use link-project or migrate
+  register <project-path>      Add a project to the registry (no symlinks; scaffolds project.yml)
+  index [--check]              Regenerate registry/PROJECTS.md from each project's project.yml
+  list                         Print registry/PROJECTS.md to stdout
+  deploy <app> <env> [opts]    Deploy an app via Kamal (12-phase pipeline)
+  rollback <app> <env> [opts]  Roll back an app to a previous version
+  env <app> <env> [opts]       Inspect env vars injected into the deployed container
+  console <app> <env> [opts]   Open an interactive session against a deployed app
+  roadmap <sub> [opts]         SOP-013 roadmap ops (bootstrap/capture/render/audit/portfolio/org/team/project)
+  work <sub> [args]            Workflow control plane (start/checkpoint/finish/status/cancel/resume/init/ship)
+  settings <sub> [args]        Portable user-level Claude Code settings (doctor)
+  render-claudemd <path>       Re-render marker-delimited regions of <project>/CLAUDE.md from workflow.yml
+  protect <path> [opts]        Assert canonical GitHub branch protection on main (--check / --apply)
+  roster                       List agents in the staff roster
+  sops                         List canonical SOPs
+  help                         Show this help
+
+${C_BOLD}Homebase root:${C_RESET} $HOMEBASE
+EOF
+}
+
+# ── Symlink manifest ───────────────────────────────────────────────────────────
+#
+# Each line: <source-relative-to-homebase>|<target-relative-to-project>
+# The project target is created as a symlink pointing at the homebase source.
+
+SYMLINK_MANIFEST=$(cat <<'EOF'
+.claude/settings.json|.claude/settings.json
+.githooks/commit-msg|.githooks/commit-msg
+scripts/hooks/commit-sop-check.sh|scripts/hooks/commit-sop-check.sh
+scripts/hooks/commit-changelog-check.sh|scripts/hooks/commit-changelog-check.sh
+scripts/hooks/claude-precommit.sh|scripts/hooks/claude-precommit.sh
+scripts/hooks/edit-main-checkout-guard.sh|scripts/hooks/edit-main-checkout-guard.sh
+scripts/hooks/gh-cli-guard-hook.sh|scripts/hooks/gh-cli-guard-hook.sh
+scripts/hooks/linear-cli-guard-hook.sh|scripts/hooks/linear-cli-guard-hook.sh
+scripts/hooks/session-start.sh|scripts/hooks/session-start.sh
+scripts/hooks/session-end-cleanup.sh|scripts/hooks/session-end-cleanup.sh
+scripts/hooks/task-created.sh|scripts/hooks/task-created.sh
+scripts/hooks/task-completed.sh|scripts/hooks/task-completed.sh
+scripts/hooks/teammate-idle.sh|scripts/hooks/teammate-idle.sh
+scripts/hooks/ui-verification-check.sh|scripts/hooks/ui-verification-check.sh
+scripts/lib/gh-api-helper.sh|scripts/lib/gh-api-helper.sh
+scripts/lib/issue-trailer.sh|scripts/lib/issue-trailer.sh
+scripts/lib/linear-api-helper.sh|scripts/lib/linear-api-helper.sh
+scripts/lib/ui-pattern.sh|scripts/lib/ui-pattern.sh
+scripts/lib/ac-regex.sh|scripts/lib/ac-regex.sh
+scripts/roadmap/audit.sh|scripts/roadmap/audit.sh
+scripts/roadmap/bootstrap.sh|scripts/roadmap/bootstrap.sh
+scripts/roadmap/capture.sh|scripts/roadmap/capture.sh
+scripts/roadmap/linear.rb|scripts/roadmap/linear.rb
+scripts/roadmap/portfolio.sh|scripts/roadmap/portfolio.sh
+scripts/roadmap/render.sh|scripts/roadmap/render.sh
+scripts/validate-docs.sh|scripts/validate-docs.sh
+scripts/extract-changelog.sh|scripts/extract-changelog.sh
+scripts/android/screencap-verify.sh|scripts/android/screencap-verify.sh
+scripts/hooks/work-cli-guard-hook.sh|scripts/hooks/work-cli-guard-hook.sh
+scripts/hooks/pre-push.sh|scripts/hooks/pre-push.sh
+scripts/hooks/xcodebuild-cli-guard-hook.sh|scripts/hooks/xcodebuild-cli-guard-hook.sh
+.githooks/pre-push|.githooks/pre-push
+EOF
+)
+
+each_manifest_entry() {
+  # Calls $1 with (src_rel, dst_rel) for each entry.
+  local fn="$1"
+  while IFS='|' read -r src dst; do
+    [[ -z "$src" ]] && continue
+    "$fn" "$src" "$dst"
+  done <<< "$SYMLINK_MANIFEST"
+}
+
+# ── link (user-level) ──────────────────────────────────────────────────────────
+
+cmd_link() {
+  local user_claude="$HOME/.claude"
+  mkdir -p "$user_claude"
+
+  link_one_user() {
+    local name="$1"
+    local src="$HOMEBASE/$name"
+    local dst="$user_claude/$name"
+
+    if [[ ! -d "$src" ]]; then
+      warn "skipping $name: source does not exist at $src"
+      return
+    fi
+
+    if [[ -L "$dst" ]]; then
+      local current
+      current=$(readlink "$dst")
+      if [[ "$current" == "$src" ]]; then
+        ok "$dst already linked → $src"
+        return
+      else
+        warn "$dst is a symlink to $current (not $src). Remove manually first."
+        return 1
+      fi
+    fi
+
+    if [[ -e "$dst" ]]; then
+      warn "$dst already exists and is not a symlink. Merge its contents into $src first, then remove $dst and re-run 'homebase link'."
+      return 1
+    fi
+
+    ln -s "$src" "$dst"
+    ok "linked $dst → $src"
+  }
+
+  link_one_user "agents"
+
+  # skills: the user may already have non-homebase skills under ~/.claude/skills
+  # (plugin-installed, personal). Symlink each homebase skill individually into
+  # that directory rather than clobbering the parent.
+  link_subdirs_user "skills"
+
+  # User-level standalone scripts that ~/.claude/settings.json or manual
+  # invocations expect to find at ~/.claude/<name>.
+  link_one_user_file "scripts/agent-signal.sh" "agent-signal.sh"
+  link_one_user_file "scripts/statusline-command.sh" "statusline-command.sh"
+
+  # User-level Claude Code settings (HMB-50). On every machine the file
+  # is a real file populated by past sessions on first run; back it up
+  # before swapping in the symlink so the operator never loses state.
+  BACKUP_EXISTING=1 link_one_user_file ".claude/user-settings.json" "settings.json"
+}
+
+# Symlink a single homebase file into ~/.claude/<dst_name>.
+# Set BACKUP_EXISTING=1 in the call's env to move any pre-existing real
+# file at <dst> aside (to <dst>.bak-<timestamp>) and proceed with the
+# symlink. Used for assets that exist as real files on every machine
+# before homebase first runs (HMB-50: ~/.claude/settings.json).
+link_one_user_file() {
+  local src_rel="$1"
+  local dst_name="$2"
+  local src="$HOMEBASE/$src_rel"
+  local dst="$HOME/.claude/$dst_name"
+
+  if [[ ! -f "$src" ]]; then
+    warn "skipping $dst_name: source does not exist at $src"
+    return
+  fi
+
+  if [[ -L "$dst" ]]; then
+    local current
+    current=$(readlink "$dst")
+    if [[ "$current" == "$src" ]]; then
+      ok "$dst already linked → $src"
+      return
+    else
+      warn "$dst is a symlink to $current (not $src). Remove manually first."
+      return 1
+    fi
+  fi
+
+  if [[ -e "$dst" ]]; then
+    if [[ "${BACKUP_EXISTING:-0}" == "1" ]]; then
+      local backup
+      backup="${dst}.bak-$(date +%Y%m%d-%H%M%S)"
+      mv "$dst" "$backup"
+      ok "backed up $dst → $backup"
+    else
+      warn "$dst already exists and is not a symlink. Merge its contents into $src first, then remove $dst and re-run 'homebase link'."
+      return 1
+    fi
+  fi
+
+  ln -s "$src" "$dst"
+  ok "linked $dst → $src"
+}
+
+# Symlink every entry in $HOMEBASE/<name>/ into ~/.claude/<name>/<entry>
+# without replacing the parent directory.
+link_subdirs_user() {
+  local name="$1"
+  local src_dir="$HOMEBASE/$name"
+  local dst_dir="$HOME/.claude/$name"
+
+  if [[ ! -d "$src_dir" ]]; then
+    warn "skipping $name: source does not exist at $src_dir"
+    return
+  fi
+
+  mkdir -p "$dst_dir"
+
+  for entry in "$src_dir"/*; do
+    [[ -e "$entry" ]] || continue
+    local base
+    base=$(basename "$entry")
+    local dst="$dst_dir/$base"
+
+    if [[ -L "$dst" ]]; then
+      local current
+      current=$(readlink "$dst")
+      if [[ "$current" == "$entry" ]]; then
+        ok "$dst already linked → $entry"
+        continue
+      else
+        warn "$dst is a symlink to $current (not $entry). Remove manually first."
+        continue
+      fi
+    fi
+
+    if [[ -e "$dst" ]]; then
+      warn "$dst already exists and is not a symlink — skipping ($name: $base). Remove manually to re-link to homebase."
+      continue
+    fi
+
+    ln -s "$entry" "$dst"
+    ok "linked $dst → $entry"
+  done
+}
+
+# ── Shared: create one project-level symlink ───────────────────────────────────
+#
+# Args: <src_rel> <dst_rel> <force-flag>
+# force=1 replaces a pre-existing real file at dst; force=0 bails on conflict.
+
+link_one_project() {
+  local src_rel="$1"
+  local dst_rel="$2"
+  local project="$3"
+  local force="${4:-0}"
+
+  local src="$HOMEBASE/$src_rel"
+  local dst="$project/$dst_rel"
+
+  if [[ ! -e "$src" ]]; then
+    warn "source missing: $src (skipping $dst_rel)"
+    return
+  fi
+
+  mkdir -p "$(dirname "$dst")"
+
+  if [[ -L "$dst" ]]; then
+    local current
+    current=$(readlink "$dst")
+    if [[ "$current" == "$src" ]]; then
+      info "  already linked: $dst_rel"
+      return
+    else
+      warn "  $dst_rel is a symlink to $current — replacing."
+      rm -f "$dst"
+    fi
+  elif [[ -e "$dst" ]]; then
+    if [[ "$force" == "1" ]]; then
+      warn "  $dst_rel exists as a file — replacing with symlink (migrate mode)."
+      rm -f "$dst"
+    else
+      err "  $dst_rel exists and is not a symlink. Run 'homebase migrate $project' to replace vendored copies."
+      return 1
+    fi
+  fi
+
+  ln -s "$src" "$dst"
+  ok "  linked: $dst_rel → $src_rel"
+}
+
+# ── link-project ───────────────────────────────────────────────────────────────
+
+cmd_link_project() {
+  local project="${1:-}"
+  [[ -z "$project" ]] && { err "usage: homebase link-project <project-path>"; return 2; }
+  [[ ! -d "$project" ]] && { err "not a directory: $project"; return 2; }
+  project="$(cd "$project" && pwd)"
+
+  info "linking homebase → $project"
+
+  each_manifest_entry_link() {
+    link_one_project "$1" "$2" "$project" 0
+  }
+  # Re-declare each_manifest_entry with closure-captured project.
+  while IFS='|' read -r src dst; do
+    [[ -z "$src" ]] && continue
+    link_one_project "$src" "$dst" "$project" 0
+  done <<< "$SYMLINK_MANIFEST"
+
+  ensure_core_hookspath "$project"
+  ensure_worktrees_gitignored "$project"
+  write_manifest "$project"
+  register_project "$project"
+  scaffold_project_yml "$project"
+  run_index_quiet
+}
+
+# ── migrate ────────────────────────────────────────────────────────────────────
+
+cmd_migrate() {
+  local project="${1:-}"
+  [[ -z "$project" ]] && { err "usage: homebase migrate <project-path>"; return 2; }
+  [[ ! -d "$project" ]] && { err "not a directory: $project"; return 2; }
+  project="$(cd "$project" && pwd)"
+
+  info "migrating $project to symlinks"
+
+  # 1. Un-gitignore .claude/settings.local.json if it's currently ignored.
+  local gitignore="$project/.gitignore"
+  if [[ -f "$gitignore" ]] && grep -qE '^(\.claude/|\.claude/\*|\.claude/settings\.local\.json)' "$gitignore"; then
+    if ! grep -qxF '!.claude/settings.local.json' "$gitignore"; then
+      info "  un-gitignoring .claude/settings.local.json"
+      # Append a negation rule (overrides preceding .claude/ ignores).
+      printf '\n# Committed: project-specific overlay for symlinked canonical settings.json\n!.claude/settings.local.json\n' >> "$gitignore"
+      ok "  appended !.claude/settings.local.json to .gitignore"
+    else
+      info "  .claude/settings.local.json already un-ignored"
+    fi
+  fi
+
+  # 2. Replace each vendored/real file with a symlink.
+  while IFS='|' read -r src dst; do
+    [[ -z "$src" ]] && continue
+    link_one_project "$src" "$dst" "$project" 1
+  done <<< "$SYMLINK_MANIFEST"
+
+  ensure_core_hookspath "$project"
+  ensure_worktrees_gitignored "$project"
+  write_manifest "$project"
+  register_project "$project"
+  scaffold_project_yml "$project"
+  run_index_quiet
+}
+
+# ── Shared helpers ─────────────────────────────────────────────────────────────
+
+ensure_core_hookspath() {
+  local project="$1"
+  if [[ -d "$project/.git" ]] || git -C "$project" rev-parse --git-dir >/dev/null 2>&1; then
+    local current_hooks
+    current_hooks=$(git -C "$project" config --get core.hooksPath 2>/dev/null || echo "")
+    if [[ "$current_hooks" != ".githooks" ]]; then
+      git -C "$project" config core.hooksPath .githooks
+      ok "  set core.hooksPath=.githooks in $project"
+    else
+      info "  core.hooksPath already .githooks"
+    fi
+  fi
+}
+
+# Ensure `.worktrees/` is gitignored when the project opts into HMB-27
+# worktree mode. No-op when project.yml is absent or worktree.enabled is
+# false. Idempotent: appends the rule once if missing.
+ensure_worktrees_gitignored() {
+  local project="$1"
+  local project_yml="$project/.homebase/project.yml"
+  [[ ! -f "$project_yml" ]] && return 0
+
+  # Cheap YAML poke without depending on the full jq+ruby pipeline at
+  # link-time. Walk the worktree: block and look for `enabled: true`.
+  awk '
+    /^[[:space:]]*worktree:/ { in_block = 1; next }
+    in_block && /^[a-zA-Z]/ { in_block = 0 }
+    in_block && /^[[:space:]]+enabled:[[:space:]]+true/ { print "yes"; exit 0 }
+  ' "$project_yml" | grep -q yes || return 0
+
+  local gitignore="$project/.gitignore"
+  if [[ -f "$gitignore" ]] && grep -qxF '.worktrees/' "$gitignore"; then
+    info "  .worktrees/ already in .gitignore"
+    return 0
+  fi
+  printf '\n# Per-task git worktrees managed by homebase work (HMB-27)\n.worktrees/\n' >> "$gitignore"
+  ok "  appended .worktrees/ to .gitignore"
+}
+
+write_manifest() {
+  local project="$1"
+  local sha
+  sha=$(git -C "$HOMEBASE" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  mkdir -p "$project/.homebase"
+  {
+    echo "{"
+    echo "  \"homebase_sha\": \"$sha\","
+    echo "  \"linked_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+    echo "  \"mode\": \"symlink\","
+    echo "  \"linked_files\": ["
+    local first=1
+    while IFS='|' read -r src dst; do
+      [[ -z "$src" ]] && continue
+      if [[ $first -eq 1 ]]; then
+        first=0
+      else
+        echo ","
+      fi
+      printf '    "%s"' "$dst"
+    done <<< "$SYMLINK_MANIFEST"
+    echo ""
+    echo "  ]"
+    echo "}"
+  } > "$project/.homebase/manifest.json"
+  ok "  wrote $project/.homebase/manifest.json (homebase_sha=$sha)"
+}
+
+# ── status ─────────────────────────────────────────────────────────────────────
+
+# HMB-88: stray worktree advisory. Flag worktrees with no commits beyond base
+# AND no state file — safe-to-remove leftovers (e.g. a worktree that `finish`
+# retained because it couldn't delete its own CWD under a live session;
+# HMB-109). Worktrees with commits or an active/finished state are legitimate
+# in-flight work; we just count them so they're visible.
+_report_stray_worktrees() {
+  local project="$1"
+  local strays=0
+  local in_flight=0
+  git -C "$project" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  local base
+  base="$(grep -E "^[[:space:]]+base:[[:space:]]+" "$project/.homebase/workflow.yml" 2>/dev/null | head -1 | awk -F: '{gsub(/^ +| +$/, "", $2); print $2}')"
+  [[ -z "$base" ]] && base="main"
+  local stray_lines=""
+  while IFS=$'\t' read -r wt_path wt_branch; do
+    [[ -z "$wt_path" ]] && continue
+    # Skip the main checkout itself. Compare canonical forms because
+    # `git worktree list` emits `/private/var/...` on macOS while $project
+    # may be `/var/...` (or vice-versa) depending on how the caller passed
+    # the path.
+    local wt_canon project_canon
+    wt_canon="$(cd "$wt_path" 2>/dev/null && pwd -P)"
+    project_canon="$(cd "$project" 2>/dev/null && pwd -P)"
+    [[ "$wt_canon" == "$project_canon" ]] && continue
+    local wt_commits sha state_file
+    wt_commits="$(git -C "$project" rev-list "$wt_branch" "^$base" 2>/dev/null | wc -l | tr -d ' ')"
+    sha="$(printf '%s' "$wt_canon" | shasum | cut -c1-8)"
+    state_file="$project/.homebase/work-state.$sha.json"
+    if [[ "$wt_commits" -eq 0 && ! -f "$state_file" ]]; then
+      strays=$((strays + 1))
+      stray_lines+="    ${C_YELLOW}stray${C_RESET}     ${wt_path#$project/} (branch $wt_branch — no commits, no state; safe to remove)"$'\n'
+    else
+      in_flight=$((in_flight + 1))
+    fi
+  done < <(git -C "$project" worktree list --porcelain 2>/dev/null | awk '
+    /^worktree / { wt=$2 }
+    /^branch / { br=$2; sub(/^refs\/heads\//, "", br) }
+    /^$/ { if (wt != "") print wt "\t" br; wt=""; br="" }
+    END { if (wt != "") print wt "\t" br }')
+  if [[ "$strays" -gt 0 ]]; then
+    echo "  ${C_YELLOW}worktrees${C_RESET}: $strays stray (safe to remove), $in_flight in-flight"
+    printf '%b' "$stray_lines"
+    echo "    ${C_YELLOW}└─${C_RESET} clean up via 'git -C $project worktree remove --force <path> && git -C $project branch -D <branch>'"
+  elif [[ "$in_flight" -gt 0 ]]; then
+    echo "  ${C_GREEN}worktrees${C_RESET}: $in_flight in-flight (no strays)"
+  fi
+}
+
+cmd_status() {
+  local project="${1:-}"
+  [[ -z "$project" ]] && { err "usage: homebase status <project-path>"; return 2; }
+  [[ ! -d "$project" ]] && { err "not a directory: $project"; return 2; }
+  project="$(cd "$project" && pwd)"
+
+  info "status: $project vs $HOMEBASE"
+
+  # HMB-63: homebase IS the source-of-truth. The files at the
+  # SYMLINK_MANIFEST destination paths are real source files, not
+  # symlinks pointing back at themselves. Running the regular check
+  # against the canonical homebase clone produces N false-positive
+  # "vendored copy" entries and returns rc=1, which then trips
+  # bootstrap's Step 4 `[FAIL] linked but status dirty`. Detect via
+  # `git worktree list` — the first entry is always the main worktree
+  # (the canonical homebase clone), regardless of whether bin/homebase
+  # was invoked from a worktree or from main.
+  local main_homebase
+  main_homebase=$(git -C "$HOMEBASE" worktree list --porcelain 2>/dev/null | awk '/^worktree/{print $2; exit}')
+  if [[ -n "$main_homebase" && "$project" -ef "$main_homebase" ]]; then
+    ok "source-of-truth checkout (manifest destinations are the canonical files)"
+    if [[ -f "$project/.homebase/manifest.json" ]]; then
+      local manifest_sha
+      manifest_sha=$(grep -o '"homebase_sha": *"[^"]*"' "$project/.homebase/manifest.json" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "")
+      local current_sha
+      current_sha=$(git -C "$HOMEBASE" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+      echo "  manifest: linked from $manifest_sha, homebase is now $current_sha"
+    fi
+    # HMB-88: surface stray worktrees on the source-of-truth path too.
+    _report_stray_worktrees "$project"
+    return 0
+  fi
+
+  local broken=0
+  local missing=0
+  local wrong=0
+  local copy=0
+
+  while IFS='|' read -r src_rel dst_rel; do
+    [[ -z "$src_rel" ]] && continue
+    local src="$HOMEBASE/$src_rel"
+    local dst="$project/$dst_rel"
+
+    if [[ ! -e "$dst" ]] && [[ ! -L "$dst" ]]; then
+      echo "  ${C_RED}missing${C_RESET}    $dst_rel"
+      missing=$((missing + 1))
+      continue
+    fi
+
+    if [[ -L "$dst" ]]; then
+      local current
+      current=$(readlink "$dst")
+      if [[ "$current" == "$src" ]]; then
+        # Symlink target exists?
+        if [[ -e "$dst" ]]; then
+          echo "  ${C_GREEN}linked${C_RESET}     $dst_rel"
+        else
+          echo "  ${C_RED}broken${C_RESET}     $dst_rel → $current (target missing)"
+          broken=$((broken + 1))
+        fi
+      else
+        echo "  ${C_YELLOW}wrong${C_RESET}      $dst_rel → $current (expected $src)"
+        wrong=$((wrong + 1))
+      fi
+    else
+      echo "  ${C_YELLOW}copy${C_RESET}       $dst_rel (vendored copy — run 'homebase migrate')"
+      copy=$((copy + 1))
+    fi
+  done <<< "$SYMLINK_MANIFEST"
+
+  echo
+  if [[ -f "$project/.homebase/manifest.json" ]]; then
+    local manifest_sha
+    manifest_sha=$(grep -o '"homebase_sha": *"[^"]*"' "$project/.homebase/manifest.json" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || echo "")
+    local current_sha
+    current_sha=$(git -C "$HOMEBASE" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    echo "  manifest: linked from $manifest_sha, homebase is now $current_sha"
+  else
+    echo "  ${C_YELLOW}no .homebase/manifest.json${C_RESET} — run 'homebase link-project $project'"
+  fi
+
+  # Branch protection check (advisory; doesn't fail status overall on drift).
+  # Operators can run `homebase protect <project> --check` for the full
+  # report or `--apply` (TPM-only) to fix drift.
+  if [[ -f "$project/.homebase/project.yml" ]]; then
+    local has_github_repos
+    has_github_repos=$(jq_or_grep_apps_github "$project")
+    if [[ -n "$has_github_repos" ]]; then
+      if "$HOMEBASE/scripts/protect.sh" "$project" --check >/dev/null 2>&1; then
+        echo "  ${C_GREEN}branch protection${C_RESET}: aligned"
+      else
+        echo "  ${C_YELLOW}branch protection${C_RESET}: drift — run 'homebase protect $project --check' for details"
+      fi
+    fi
+  fi
+
+  # HMB-88: stray worktree advisory shared with the source-of-truth path.
+  _report_stray_worktrees "$project"
+
+  echo
+  if [[ $missing -eq 0 && $broken -eq 0 && $wrong -eq 0 && $copy -eq 0 ]]; then
+    ok "clean"
+    return 0
+  fi
+  err "$missing missing, $broken broken, $wrong wrong target, $copy vendored copies"
+  return 1
+}
+
+# Returns non-empty stdout if the project's project.yml declares any
+# apps[].github entries. Used by cmd_status to skip the branch-protection
+# check for projects without GitHub repos declared.
+jq_or_grep_apps_github() {
+  local proj="$1"
+  if command -v jq >/dev/null 2>&1 && command -v ruby >/dev/null 2>&1; then
+    ruby -ryaml -rjson -e 'puts JSON.generate(YAML.load_file(ARGV[0]))' "$proj/.homebase/project.yml" 2>/dev/null \
+      | jq -r '(.apps // []) | map(.github // empty) | first // empty'
+  else
+    grep -E '^\s+github:' "$proj/.homebase/project.yml" 2>/dev/null | head -1
+  fi
+}
+
+# ── sync (deprecated) ──────────────────────────────────────────────────────────
+
+cmd_sync() {
+  err "'sync' is deprecated. Homebase no longer vendors copies into projects."
+  cat >&2 <<EOF
+
+Replacements:
+
+  homebase link-project <project>     — create symlinks for a fresh project
+  homebase migrate <project>          — idempotent: replace vendored copies with symlinks
+
+To migrate an existing vendored project, run:
+
+  homebase migrate "${1:-<project-path>}"
+
+EOF
+  return 2
+}
+
+# ── roster ─────────────────────────────────────────────────────────────────────
+
+cmd_roster() {
+  if [[ ! -d "$HOMEBASE/agents" ]]; then
+    warn "no agents/ directory in $HOMEBASE"
+    return 1
+  fi
+
+  echo "${C_BOLD}Homebase staff roster:${C_RESET}"
+  for f in "$HOMEBASE"/agents/*.md; do
+    [[ ! -f "$f" ]] && continue
+    local name
+    name=$(basename "$f" .md)
+    local desc
+    desc=$(awk -F': ' '/^description: /{gsub(/^"|"$/, "", $2); print $2; exit}' "$f")
+    printf "  %-32s  %s\n" "$name" "$desc"
+  done
+}
+
+# ── sops ──────────────────────────────────────────────────────────────────────
+
+cmd_sops() {
+  if [[ ! -d "$HOMEBASE/sops" ]]; then
+    warn "no sops/ directory in $HOMEBASE"
+    return 1
+  fi
+
+  echo "${C_BOLD}Canonical SOPs:${C_RESET}"
+  for f in "$HOMEBASE"/sops/HOMEBASE-SOP-*.md; do
+    [[ ! -f "$f" ]] && continue
+    local name
+    name=$(basename "$f" .md)
+    local title
+    title=$(awk '/^# /{sub(/^# /, ""); print; exit}' "$f")
+    printf "  %-52s  %s\n" "$name" "$title"
+  done
+}
+
+# ── registry: scaffold / register / index / list ───────────────────────────────
+
+PATHS_FILE="$HOMEBASE/registry/projects.paths"
+REGISTRY_FILE="$HOMEBASE/registry/PROJECTS.md"
+RENDERER="$HOMEBASE/scripts/lib/render-registry.rb"
+PROJECT_YML_TEMPLATE="$HOMEBASE/templates/project.yml.tmpl"
+
+# Copy the template into the project if .homebase/project.yml is missing.
+# Prefills the `name:` line with the project's directory basename.
+scaffold_project_yml() {
+  local project="$1"
+  local dst="$project/.homebase/project.yml"
+  [[ -f "$dst" ]] && { info "  .homebase/project.yml already present"; return 0; }
+
+  if [[ ! -f "$PROJECT_YML_TEMPLATE" ]]; then
+    warn "  no project.yml template at $PROJECT_YML_TEMPLATE"
+    return 0
+  fi
+
+  local base
+  base="$(basename "$project")"
+  mkdir -p "$project/.homebase"
+  sed "s/^name: PROJECT_NAME$/name: $base/" "$PROJECT_YML_TEMPLATE" > "$dst"
+  ok "  scaffolded $dst (fill in apps[] and run 'homebase index')"
+  warn "  registry for '$base' is incomplete until you fill in $dst"
+}
+
+# Append $project's absolute path to registry/projects.paths if not already present.
+register_project() {
+  local project="$1"
+  mkdir -p "$HOMEBASE/registry"
+  touch "$PATHS_FILE"
+
+  if grep -qxF "$project" "$PATHS_FILE" 2>/dev/null; then
+    info "  already registered: $project"
+    return 0
+  fi
+
+  # Append, then sort and dedupe in place.
+  printf '%s\n' "$project" >> "$PATHS_FILE"
+  LC_ALL=C sort -u "$PATHS_FILE" -o "$PATHS_FILE"
+  ok "  registered in $PATHS_FILE"
+}
+
+run_index_quiet() {
+  cmd_index >/dev/null 2>&1 || warn "  'homebase index' failed — run it manually to diagnose"
+}
+
+cmd_register() {
+  local project="${1:-}"
+  [[ -z "$project" ]] && { err "usage: homebase register <project-path>"; return 2; }
+  [[ ! -d "$project" ]] && { err "not a directory: $project"; return 2; }
+  project="$(cd "$project" && pwd)"
+
+  info "registering $project with homebase"
+  register_project "$project"
+  scaffold_project_yml "$project"
+  cmd_index
+}
+
+cmd_index() {
+  local mode="${1:-}"
+
+  if [[ ! -x "$RENDERER" ]]; then
+    err "missing renderer at $RENDERER"
+    return 2
+  fi
+  if [[ ! -f "$PATHS_FILE" ]]; then
+    err "no registry: $PATHS_FILE does not exist — run 'homebase register <project>' or 'homebase link-project <project>'"
+    return 2
+  fi
+  if ! command -v ruby >/dev/null 2>&1; then
+    err "ruby not found on PATH — required for registry rendering"
+    return 2
+  fi
+
+  local tmp
+  tmp="$(mktemp -t homebase-registry.XXXXXX)"
+  if ! ruby "$RENDERER" "$HOMEBASE" > "$tmp"; then
+    local rc=$?
+    rm -f "$tmp"
+    if [[ $rc -eq 1 ]]; then
+      err "one or more projects are missing .homebase/project.yml — see warnings above"
+    fi
+    return "$rc"
+  fi
+
+  if [[ "$mode" == "--check" ]]; then
+    if [[ -f "$REGISTRY_FILE" ]] && diff -q "$REGISTRY_FILE" "$tmp" >/dev/null 2>&1; then
+      rm -f "$tmp"
+      ok "registry up to date"
+      return 0
+    fi
+    err "registry drift — run 'homebase index' and commit the diff"
+    if [[ -f "$REGISTRY_FILE" ]]; then
+      diff -u "$REGISTRY_FILE" "$tmp" >&2 || true
+    fi
+    rm -f "$tmp"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$REGISTRY_FILE")"
+  mv "$tmp" "$REGISTRY_FILE"
+  local lines
+  lines="$(wc -l < "$REGISTRY_FILE" | tr -d ' ')"
+  local projects
+  projects="$(grep -cvE '^(#|$)' "$PATHS_FILE" || true)"
+  ok "wrote $REGISTRY_FILE ($lines lines, $projects projects)"
+}
+
+cmd_list() {
+  if [[ ! -f "$REGISTRY_FILE" ]]; then
+    err "no registry — run 'homebase index' first"
+    return 1
+  fi
+  cat "$REGISTRY_FILE"
+}
+
+# ── deploy / rollback ──────────────────────────────────────────────────────────
+
+cmd_deploy() {
+  exec "$HOMEBASE/scripts/deploy/deploy.sh" "$@"
+}
+
+cmd_rollback() {
+  exec "$HOMEBASE/scripts/deploy/rollback.sh" "$@"
+}
+
+cmd_env() {
+  exec "$HOMEBASE/scripts/deploy/env.sh" "$@"
+}
+
+cmd_console() {
+  exec "$HOMEBASE/scripts/deploy/console.sh" "$@"
+}
+
+# ── roadmap (SOP-013) ──────────────────────────────────────────────────────────
+#
+# Scope: canon-driven glue between homebase and Linear (bootstrap from canonical
+# tables, surgical writes into project.yml, snapshot rendering, drift audit) +
+# read-only diagnostics. Individual Linear mutations (team/project/label/
+# milestone/initiative CRUD, issue updates) live in the Linear MCP plugin and
+# Linear's web UI.
+#
+# `bootstrap` and `capture` are mutations: LINEAR_TPM_AUTHORIZED=1 required,
+# enforced by scripts/hooks/linear-cli-guard-hook.sh. Everything else is
+# read-only.
+
+cmd_roadmap() {
+  local sub="${1:-help}"
+  shift || true
+  case "$sub" in
+    bootstrap)  exec "$HOMEBASE/scripts/roadmap/bootstrap.sh" "$@" ;;
+    capture)    exec "$HOMEBASE/scripts/roadmap/capture.sh" "$@" ;;
+    render)     exec "$HOMEBASE/scripts/roadmap/render.sh" "$@" ;;
+    audit)      exec "$HOMEBASE/scripts/roadmap/audit.sh" "$@" ;;
+    portfolio)  exec "$HOMEBASE/scripts/roadmap/portfolio.sh" "$@" ;;
+    # Read-only passthroughs straight to linear.rb — no shell wrapper needed:
+    org|team|project)
+      exec ruby "$HOMEBASE/scripts/roadmap/linear.rb" "$sub" "$@"
+      ;;
+    help|-h|--help)
+      cat <<EOF
+homebase roadmap — SOP-013 roadmap operations.
+
+Canon-driven (mutation; TPM-only):
+  bootstrap [--dry-run]              Idempotent workspace setup from canon
+  capture <app>                      Refresh Linear IDs into <project>/.homebase/project.yml
+
+Read-only:
+  render                             Regenerate registry/ROADMAP.md + snapshot.yml
+  audit                              Verify live Linear state vs canon
+  portfolio [--json]                 Terminal summary per Project
+  org                                Workspace + viewer sanity check
+  team list                          List Teams
+  project list [--team KEY]          List Projects
+
+Individual Linear mutations (team/project/label/milestone/initiative CRUD,
+issue updates) live in the Linear MCP plugin and the Linear web UI — not here.
+
+Canonical SOP: ~/code/homebase/sops/HOMEBASE-SOP-013-ROADMAP_MANAGEMENT.md
+EOF
+      ;;
+    *) err "unknown: roadmap $sub (individual mutations live in Linear MCP / UI)"; return 2 ;;
+  esac
+}
+
+# ── render-claudemd ────────────────────────────────────────────────────────────
+
+cmd_render_claudemd() {
+  local project="${1:-}"
+  shift || true
+  if [[ -z "$project" ]]; then
+    cat <<EOF
+usage: homebase render-claudemd <project-path> [--check]
+
+Re-renders <project-path>/CLAUDE.md sections delimited by:
+  <!-- BEGIN homebase:adopted-sops -->     <!-- END homebase:adopted-sops -->
+  <!-- BEGIN homebase:hard-rules -->       <!-- END homebase:hard-rules -->
+  <!-- BEGIN homebase:required-checks -->  <!-- END homebase:required-checks -->
+  <!-- BEGIN homebase:required-agents -->  <!-- END homebase:required-agents -->
+
+Pass --check to exit non-zero on drift without writing.
+Operator prose outside markers is never modified.
+EOF
+    return 2
+  fi
+  if ! command -v ruby >/dev/null 2>&1; then
+    err "ruby not found on PATH — required for render-claudemd"
+    return 2
+  fi
+  exec ruby "$HOMEBASE/scripts/render-claudemd.rb" "$project" "$@"
+}
+
+# ── work (workflow control plane) ──────────────────────────────────────────────
+
+cmd_work() {
+  local sub="${1:-help}"
+  shift || true
+  case "$sub" in
+    start)       exec "$HOMEBASE/scripts/work/start.sh" "$@" ;;
+    chore)       exec "$HOMEBASE/scripts/work/chore.sh" "$@" ;;
+    checkpoint)  exec "$HOMEBASE/scripts/work/checkpoint.sh" "$@" ;;
+    finish)      exec "$HOMEBASE/scripts/work/finish.sh" "$@" ;;
+    status)      exec "$HOMEBASE/scripts/work/status.sh" "$@" ;;
+    cancel)      exec "$HOMEBASE/scripts/work/cancel.sh" "$@" ;;
+    resume)      exec "$HOMEBASE/scripts/work/resume.sh" "$@" ;;
+    rescue)      exec "$HOMEBASE/scripts/work/rescue.sh" "$@" ;;
+    init)        exec "$HOMEBASE/scripts/work/init.sh" "$@" ;;
+    ship)        exec "$HOMEBASE/scripts/work/ship.sh" "$@" ;;
+    goto)        exec "$HOMEBASE/scripts/work/goto.sh" "$@" ;;
+    list)        exec "$HOMEBASE/scripts/work/list.sh" "$@" ;;
+    help|-h|--help)
+      cat <<EOF
+homebase work — workflow control plane (replaces SOP prose as control flow).
+
+Verbs:
+  start <ISSUE-KEY> [opts]    Begin work on an issue (validates start_gates, moves Linear)
+  chore "<desc>" [opts]       Begin off-contract chore work (governance / canon / SOP edits;
+                              creates a chore-flavoured worktree, no Linear issue required)
+  checkpoint [opts]           Mid-task progress signal (optional state move, --push)
+  finish [opts]               End work (runs the 13 finish-gates, opens PR, moves Linear)
+  status [opts]               Read-only diagnostic of current work-state and gates
+  cancel [opts]               Abandon current work-state (leaves branch + commits)
+  resume <ISSUE-KEY>          Rebuild work-state from current branch + Linear (recovery)
+  init                        Scaffold .homebase/workflow.yml from template
+  ship <APP> <VERSION>        Aggregator: deploy + Linear milestone-done
+  goto <ISSUE-KEY>            Print the worktree path for this issue (HMB-27 worktree mode)
+  list                        List active worktrees in this project (HMB-27 worktree mode)
+
+The contract for this project lives in <project>/.homebase/workflow.yml.
+Schema: ~/code/homebase/schemas/workflow.schema.json
+Standard: ~/code/homebase/standards/WORKFLOW_CONTRACT.md
+EOF
+      ;;
+    *) err "unknown: work $sub"; return 2 ;;
+  esac
+}
+
+# ── auth (HMB-45 Finding 11 — self-diagnosis for hook auth gates) ──────────────
+#
+# Read-only verb that prints which auth env vars are visible to the hook
+# process itself. Lets agents and operators self-diagnose the LINEAR_TPM_AUTHORIZED
+# (and sibling) gate without trial-and-error retries — the hook reads
+# Claude Code's parent-process env at fork time, so inline VAR=1 prefixes
+# and mid-session `export` don't help. The verb shows what the hook
+# actually sees.
+
+cmd_auth() {
+  local sub="${1:-help}"
+  shift || true
+  case "$sub" in
+    status)      exec "$HOMEBASE/scripts/auth/status.sh" "$@" ;;
+    help|-h|--help)
+      cat <<EOF
+homebase auth — self-diagnosis for hook auth gates (HMB-45 Finding 11).
+
+Verbs:
+  status            Print which auth env vars are visible to the hook process
+
+Why: gates like LINEAR_TPM_AUTHORIZED are launch-time-only — Claude Code
+reads its own process env captured at fork. Mid-session 'export' and
+inline 'VAR=1 cmd' don't help. Use 'homebase auth status' to see what
+the hook actually sees, then either relaunch with the var set or add it
+to .claude/settings.local.json's env block.
+
+EOF
+      ;;
+    *) err "unknown: auth $sub"; return 2 ;;
+  esac
+}
+
+# ── settings (HMB-50) ──────────────────────────────────────────────────────────
+
+cmd_settings() {
+  local sub="${1:-help}"
+  shift || true
+  case "$sub" in
+    doctor)      exec "$HOMEBASE/scripts/settings/doctor.sh" "$@" ;;
+    help|-h|--help)
+      cat <<EOF
+homebase settings — manage portable user-level Claude Code settings (HMB-50).
+
+Verbs:
+  doctor            Verify ~/.claude/settings.json symlinks to homebase canonical;
+                    recover from in-place rewrites by Claude Code.
+
+Why: ~/.claude/settings.json carries hundreds of permission entries, plugin
+toggles, and personal preferences. Tracking it in homebase + symlinking it
+into ~/.claude/ on every machine makes Claude Code permissions portable
+across Macs without re-approving on each one. 'doctor' is the safety net
+for the (rare) case where Claude Code atomic-replaces the symlink with a
+real file: it diffs, preserves drift, and re-establishes the symlink.
+
+EOF
+      ;;
+    *) err "unknown: settings $sub"; return 2 ;;
+  esac
+}
+
+# ── deps (HOMEBASE-SOP-015 / HMB-60) ───────────────────────────────────────────
+#
+# Manage pinned third-party CLI dependencies declared in
+# `.homebase/dependencies.yml`. Bootstrap performs the same install +
+# version-pin + drift checks; `deps verify` runs them standalone.
+#
+# Verbs:
+#   verify                       Run drift checks without installing.
+#   sync <name>                  Copy upstream-for-pinned-version into vendored.
+#   bump <name> <version>        Update the pin in dependencies.yml.
+
+_deps_read_pin() {
+  local name="$1"
+  # HMB-62: anchor to HOMEBASE root so the manifest is read from the
+  # canonical homebase clone regardless of cwd. Without this, `homebase
+  # bootstrap` run from a registered project's directory fails Step 2
+  # ("Missing xcodebuildmcp pin") because open() resolves against the
+  # project's cwd, not homebase's.
+  python3 - "$name" "$HOMEBASE/.homebase/dependencies.yml" <<'PY' 2>/dev/null
+import sys, yaml
+name = sys.argv[1]
+manifest_path = sys.argv[2]
+data = yaml.safe_load(open(manifest_path))
+print(data['dependencies'][name]['version'])
+PY
+}
+
+_deps_upstream_skill_path() {
+  local name="$1"
+  local pin="$2"
+  # Resolve via brew's stable opt/ symlink (canonical "active version" path)
+  # so a transient version skew doesn't leave us pointing at the wrong Cellar
+  # directory.
+  local prefix
+  prefix=$(brew --prefix "$name" 2>/dev/null) || return 1
+  echo "$prefix/libexec/skills/${name}-cli/SKILL.md"
+}
+
+cmd_deps() {
+  local action="${1:-help}"
+  shift || true
+  case "$action" in
+    verify) cmd_deps_verify "$@" ;;
+    sync)   cmd_deps_sync "$@" ;;
+    bump)   cmd_deps_bump "$@" ;;
+    help|-h|--help)
+      cat <<EOF
+homebase deps — manage pinned third-party CLI dependencies (HOMEBASE-SOP-015).
+
+Verbs:
+  verify                  Re-run the drift checks bootstrap performs, without
+                          installing or modifying anything. Exits non-zero on
+                          drift; suitable for CI and session-start sanity.
+
+  sync <name>             Copy the upstream-for-pinned-version of <name>'s
+                          vendored content into homebase. Does NOT bump the
+                          pin; review the diff before committing.
+
+  bump <name> <version>   Update <name>'s pin in .homebase/dependencies.yml.
+                          Does NOT sync vendored content (run 'sync' next).
+
+The manifest lives at .homebase/dependencies.yml; the schema at
+schemas/dependencies.schema.json.
+
+EOF
+      ;;
+    *) err "unknown: deps $action"; return 2 ;;
+  esac
+}
+
+cmd_deps_verify() {
+  local fails=0
+  cd "$HOMEBASE"
+
+  local pin
+  pin=$(_deps_read_pin xcodebuildmcp) || {
+    err "Cannot read xcodebuildmcp pin from .homebase/dependencies.yml"
+    return 1
+  }
+
+  if ! command -v xcodebuildmcp >/dev/null 2>&1; then
+    err "xcodebuildmcp not on PATH (pin: $pin). Run 'homebase bootstrap' to install."
+    fails=$((fails + 1))
+  else
+    local installed
+    installed=$(xcodebuildmcp --version 2>/dev/null | tr -d '[:space:]')
+    if [[ "$installed" != "$pin" ]]; then
+      err "xcodebuildmcp $installed != pinned $pin. To upgrade: 'brew upgrade xcodebuildmcp' then 'homebase deps sync xcodebuildmcp' then 'homebase deps bump xcodebuildmcp $installed'. To downgrade: 'brew install xcodebuildmcp@$pin' or pin via 'brew extract'."
+      fails=$((fails + 1))
+    fi
+  fi
+
+  local vendored="$HOMEBASE/skills/xcodebuildmcp-cli/SKILL.md"
+  local upstream
+  upstream=$(_deps_upstream_skill_path xcodebuildmcp "$pin") || upstream=""
+
+  if [[ ! -f "$vendored" ]]; then
+    err "Vendored skills/xcodebuildmcp-cli/SKILL.md does not exist."
+    fails=$((fails + 1))
+  elif [[ -z "$upstream" || ! -f "$upstream" ]]; then
+    err "Upstream xcodebuildmcp SKILL.md not at expected path (resolved via 'brew --prefix xcodebuildmcp')."
+    fails=$((fails + 1))
+  elif ! diff -q "$vendored" "$upstream" >/dev/null 2>&1; then
+    err "Vendored SKILL.md differs from xcodebuildmcp $pin upstream. Run 'homebase deps sync xcodebuildmcp' to update, then commit. Diff: diff -u $vendored $upstream"
+    fails=$((fails + 1))
+  fi
+
+  if [[ $fails -eq 0 ]]; then
+    ok "xcodebuildmcp $pin pin + vendored SKILL.md match"
+    return 0
+  fi
+  return 1
+}
+
+cmd_deps_sync() {
+  local name="${1:-}"
+  [[ -z "$name" ]] && { err "usage: homebase deps sync <name>"; return 2; }
+
+  case "$name" in
+    xcodebuildmcp)
+      cd "$HOMEBASE"
+      local pin
+      pin=$(_deps_read_pin xcodebuildmcp) || {
+        err "Cannot read xcodebuildmcp pin from .homebase/dependencies.yml"
+        return 1
+      }
+      local upstream
+      upstream=$(_deps_upstream_skill_path xcodebuildmcp "$pin") || {
+        err "Cannot resolve upstream skill path (brew --prefix xcodebuildmcp failed)"
+        return 1
+      }
+      if [[ ! -f "$upstream" ]]; then
+        err "Upstream SKILL.md not at $upstream. Is xcodebuildmcp installed via brew?"
+        return 1
+      fi
+      local vendored="$HOMEBASE/skills/xcodebuildmcp-cli/SKILL.md"
+      cp "$upstream" "$vendored"
+      ok "copied upstream SKILL.md (xcodebuildmcp $pin) → $vendored"
+      echo "Next: review the diff ('git diff $vendored'), commit. Does NOT bump the version pin."
+      ;;
+    *)
+      err "unknown dependency: $name"
+      return 2
+      ;;
+  esac
+}
+
+cmd_deps_bump() {
+  local name="${1:-}"
+  local version="${2:-}"
+  [[ -z "$name" || -z "$version" ]] && { err "usage: homebase deps bump <name> <version>"; return 2; }
+
+  case "$name" in
+    xcodebuildmcp)
+      cd "$HOMEBASE"
+      local manifest="$HOMEBASE/.homebase/dependencies.yml"
+      python3 - "$version" <<'PY'
+import re, sys
+new = sys.argv[1]
+path = '.homebase/dependencies.yml'
+with open(path) as f:
+    text = f.read()
+# Match the version line inside the xcodebuildmcp block. Anchored on the
+# 'xcodebuildmcp:' key + the indented version line that follows it. Comments
+# and other fields are preserved.
+new_text, n = re.subn(
+    r'(^  xcodebuildmcp:\n(?:.*\n)*?    version: )"[^"]*"',
+    lambda m: m.group(1) + '"' + new + '"',
+    text,
+    count=1,
+    flags=re.MULTILINE,
+)
+if n != 1:
+    raise SystemExit("Could not locate xcodebuildmcp version line in " + path)
+with open(path, 'w') as f:
+    f.write(new_text)
+PY
+      ok "bumped xcodebuildmcp pin to $version in $manifest"
+      echo "Next: 'homebase deps sync xcodebuildmcp' to sync SKILL.md against the new upstream, then commit both files together."
+      ;;
+    *)
+      err "unknown dependency: $name"
+      return 2
+      ;;
+  esac
+}
+
+# ── bootstrap (SOP-014) ────────────────────────────────────────────────────────
+#
+# First-run on a new machine. Idempotent: safe to re-run any time. Prints
+# [OK] / [WARN] / [FAIL] per check and a summary line. Exits non-zero if any
+# check fails. Performs no destructive operations — the worst case is a no-op.
+#
+# Canonical procedure: ~/code/homebase/sops/HOMEBASE-SOP-014-MACHINE_MIGRATION.md
+
+# HMB-87 B.12: bootstrap fragments live in scripts/lib/bootstrap-helpers.sh
+# so the test harness can exercise them in isolation.
+# shellcheck source=../scripts/lib/bootstrap-helpers.sh
+. "$HOMEBASE/scripts/lib/bootstrap-helpers.sh"
+
+cmd_bootstrap() {
+  local pass=0
+  local warns=0
+  local fails=0
+
+  bootstrap_ok()    { echo "  ${C_GREEN}[OK]${C_RESET}   $*"; pass=$((pass + 1)); }
+  bootstrap_warn()  { echo "  ${C_YELLOW}[WARN]${C_RESET} $*"; warns=$((warns + 1)); }
+  bootstrap_fail()  { echo "  ${C_RED}[FAIL]${C_RESET} $*"; fails=$((fails + 1)); }
+
+  echo "${C_BOLD}homebase bootstrap${C_RESET} — SOP-014 first-run verification"
+  echo
+
+  # 1. Homebase clone is healthy.
+  # HMB-62: accept worktrees as well as the main checkout. In a worktree,
+  # `$HOMEBASE/.git` is a file (gitdir redirect), not a directory — the
+  # `-d` test fails. `git -C <path> rev-parse HEAD` is the authoritative
+  # check; the prior `-d` test was redundant guarding.
+  echo "${C_BOLD}1. Homebase repository${C_RESET}"
+  if git -C "$HOMEBASE" rev-parse HEAD >/dev/null 2>&1; then
+    local sha
+    sha=$(git -C "$HOMEBASE" rev-parse --short HEAD)
+    bootstrap_ok "$HOMEBASE is a git checkout (HEAD: $sha)"
+  else
+    bootstrap_fail "$HOMEBASE is not a git checkout — clone git@github.com:acme-co/homebase.git ~/code/homebase first"
+    echo
+    echo "${C_BOLD}Bootstrap aborted:${C_RESET} cannot proceed without homebase."
+    return 2
+  fi
+  echo
+
+  # 2. Apple toolchain dependency (HOMEBASE-SOP-015 / HMB-60).
+  #
+  # Install + version-pin + skill-dir migration MUST run before cmd_link so
+  # link_subdirs_user picks up an empty `~/.claude/skills/xcodebuildmcp-cli/`
+  # slot and creates the homebase symlink. Drift check runs after, against
+  # the brew-installed upstream skill content.
+  echo "${C_BOLD}2. Apple toolchain dependency (xcodebuildmcp)${C_RESET}"
+  local xbmcp_pin
+  xbmcp_pin=$(_deps_read_pin xcodebuildmcp 2>/dev/null || echo "")
+  if [[ -z "$xbmcp_pin" ]]; then
+    bootstrap_fail "Missing xcodebuildmcp pin in .homebase/dependencies.yml — homebase requires explicit dependency versions."
+  elif ! command -v brew >/dev/null 2>&1; then
+    bootstrap_fail "Homebrew required to install xcodebuildmcp on this Mac. Install Homebrew first (https://brew.sh) then re-run 'homebase bootstrap'."
+  else
+    if ! command -v xcodebuildmcp >/dev/null 2>&1; then
+      if brew tap getsentry/xcodebuildmcp >/dev/null 2>&1 && brew install xcodebuildmcp >/dev/null 2>&1; then
+        bootstrap_ok "installed xcodebuildmcp via brew"
+      else
+        bootstrap_fail "brew install xcodebuildmcp failed — re-run 'brew install xcodebuildmcp' manually to see the error"
+      fi
+    fi
+
+    if command -v xcodebuildmcp >/dev/null 2>&1; then
+      local installed
+      installed=$(xcodebuildmcp --version 2>/dev/null | tr -d '[:space:]')
+      if [[ "$installed" == "$xbmcp_pin" ]]; then
+        bootstrap_ok "xcodebuildmcp $installed matches pin"
+      else
+        bootstrap_fail "xcodebuildmcp $installed != pinned $xbmcp_pin. To upgrade: 'brew upgrade xcodebuildmcp' then 'homebase deps sync xcodebuildmcp' then 'homebase deps bump xcodebuildmcp $installed' (commit both). To downgrade: 'brew install xcodebuildmcp@$xbmcp_pin' if a versioned formula exists, else pin via 'brew extract'."
+      fi
+    fi
+
+    # Skill-dir migration — back up any third-party real directory so the
+    # homebase symlink can land cleanly on the next cmd_link pass.
+    # HMB-62: backups go to ~/.claude/.skill-backups/ (outside the skill
+    # loader's enumeration root). Pre-HMB-62 bootstrap runs left
+    # `xcodebuildmcp-cli.bak-<ts>/` directories under ~/.claude/skills/
+    # itself, which Claude Code's loader picked up as visible skills —
+    # legacy backups are relocated here.
+    local skill_dir="$HOME/.claude/skills/xcodebuildmcp-cli"
+    local backup_root="$HOME/.claude/.skill-backups"
+    if [[ -d "$skill_dir" && ! -L "$skill_dir" ]]; then
+      mkdir -p "$backup_root"
+      local backup_dir="$backup_root/xcodebuildmcp-cli-$(date +%Y%m%d-%H%M%S)"
+      if mv "$skill_dir" "$backup_dir" 2>/dev/null; then
+        bootstrap_ok "backed up third-party skill drop: $backup_dir"
+      else
+        bootstrap_warn "failed to back up $skill_dir — homebase symlink will not replace it"
+      fi
+    fi
+    # Legacy cleanup: relocate any pre-HMB-62 .bak-* directories sitting
+    # directly under ~/.claude/skills/ into backup_root so they stop
+    # appearing in the skill loader's enumeration.
+    shopt -s nullglob
+    local legacy
+    for legacy in "$HOME/.claude/skills/"*.bak-*; do
+      mkdir -p "$backup_root"
+      local target="$backup_root/$(basename "$legacy")"
+      if mv "$legacy" "$target" 2>/dev/null; then
+        bootstrap_ok "relocated legacy skill backup: $(basename "$legacy") → $backup_root/"
+      fi
+    done
+    shopt -u nullglob
+  fi
+  echo
+
+  # 3. User-level link.
+  echo "${C_BOLD}3. User-level symlinks (~/.claude/)${C_RESET}"
+  if cmd_link >/dev/null 2>&1; then
+    bootstrap_ok "ran 'homebase link' (agents, skills, statusline, agent-signal, settings.json)"
+  else
+    bootstrap_fail "'homebase link' failed — re-run manually to see the conflict"
+  fi
+  # HMB-50: surface a dedicated [OK]/[WARN]/[FAIL] for the user-level
+  # settings.json symlink, which is the file that carries operator
+  # permissions and preferences across machines. Doctor exits 0 = clean,
+  # 1 = fail, 2 = warn (symlink points elsewhere — manual fix required).
+  local settings_rc=0
+  "$HOMEBASE/scripts/settings/doctor.sh" >/dev/null 2>&1 || settings_rc=$?
+  case $settings_rc in
+    0) bootstrap_ok "~/.claude/settings.json → homebase/.claude/user-settings.json (HMB-50)" ;;
+    2) bootstrap_warn "~/.claude/settings.json points elsewhere — run 'homebase settings doctor' for details" ;;
+    *) bootstrap_fail "'homebase settings doctor' failed (rc=$settings_rc) — run it manually" ;;
+  esac
+  echo
+
+  # 3b. xcodebuildmcp SKILL.md drift check — runs AFTER cmd_link so the
+  # symlink is in place. FAIL on drift, not warn.
+  echo "${C_BOLD}3b. xcodebuildmcp SKILL.md drift${C_RESET}"
+  if [[ -z "$xbmcp_pin" ]] || ! command -v xcodebuildmcp >/dev/null 2>&1; then
+    bootstrap_warn "skipped — xcodebuildmcp not installed (resolve step 2 first)"
+  else
+    local vendored="$HOMEBASE/skills/xcodebuildmcp-cli/SKILL.md"
+    local upstream
+    upstream=$(_deps_upstream_skill_path xcodebuildmcp "$xbmcp_pin" 2>/dev/null || echo "")
+    if [[ ! -f "$vendored" ]]; then
+      bootstrap_fail "Vendored skills/xcodebuildmcp-cli/SKILL.md does not exist in homebase."
+    elif [[ -z "$upstream" || ! -f "$upstream" ]]; then
+      bootstrap_fail "Upstream xcodebuildmcp SKILL.md not found (resolved via 'brew --prefix xcodebuildmcp')."
+    elif diff -q "$vendored" "$upstream" >/dev/null 2>&1; then
+      bootstrap_ok "vendored SKILL.md matches xcodebuildmcp $xbmcp_pin upstream"
+    else
+      bootstrap_fail "Vendored SKILL.md differs from xcodebuildmcp $xbmcp_pin upstream. Run 'homebase deps sync xcodebuildmcp' to update, then commit. Diff: diff -u $vendored $upstream"
+    fi
+  fi
+  echo
+
+  # 4. Walk every registered project.
+  echo "${C_BOLD}4. Registered projects (registry/projects.paths)${C_RESET}"
+  if [[ ! -f "$PATHS_FILE" ]]; then
+    bootstrap_warn "no $PATHS_FILE — nothing to link-project"
+  else
+    while IFS= read -r project_path; do
+      [[ -z "$project_path" ]] && continue
+      [[ "$project_path" =~ ^# ]] && continue
+
+      if [[ ! -d "$project_path" ]]; then
+        bootstrap_warn "not yet cloned: $project_path"
+        continue
+      fi
+
+      if cmd_link_project "$project_path" >/dev/null 2>&1; then
+        if cmd_status "$project_path" >/dev/null 2>&1; then
+          bootstrap_ok "linked + status clean: $project_path"
+        else
+          bootstrap_fail "linked but status dirty: $project_path — run 'homebase status $project_path'"
+        fi
+      else
+        bootstrap_fail "link-project failed: $project_path — run 'homebase link-project $project_path' to diagnose"
+      fi
+    done < "$PATHS_FILE"
+  fi
+  echo
+
+  # 5. Linear key file.
+  echo "${C_BOLD}5. Linear API credentials (~/.config/homebase/env)${C_RESET}"
+  local env_file="$HOME/.config/homebase/env"
+  if [[ ! -f "$env_file" ]]; then
+    bootstrap_fail "$env_file does not exist — restore from migration bundle, then 'chmod 600' it"
+  else
+    local mode
+    mode=$(stat -f "%Lp" "$env_file" 2>/dev/null || stat -c "%a" "$env_file" 2>/dev/null || echo "")
+    if [[ "$mode" != "600" ]]; then
+      bootstrap_warn "$env_file has mode $mode (expected 600) — run: chmod 600 $env_file"
+    else
+      bootstrap_ok "$env_file present, mode 600"
+    fi
+    if grep -q '^LINEAR_API_KEY=' "$env_file" 2>/dev/null; then
+      bootstrap_ok "LINEAR_API_KEY entry present (value not displayed)"
+    else
+      bootstrap_fail "LINEAR_API_KEY entry missing — add 'LINEAR_API_KEY=<key>' to $env_file"
+    fi
+  fi
+  echo
+
+  # 6. gh CLI auth.
+  echo "${C_BOLD}6. gh CLI auth (github.com)${C_RESET}"
+  if ! command -v gh >/dev/null 2>&1; then
+    bootstrap_fail "gh not on PATH — run 'brew install gh' then 'gh auth login'"
+  elif gh auth status -h github.com >/dev/null 2>&1; then
+    local gh_user
+    gh_user=$(gh api user -q .login 2>/dev/null || echo "?")
+    bootstrap_ok "logged in to github.com as $gh_user"
+  else
+    bootstrap_fail "not logged in to github.com — run 'gh auth login' (choose SSH)"
+  fi
+  echo
+
+  # 7. SSH to GitHub.
+  echo "${C_BOLD}7. SSH connectivity (git@github.com)${C_RESET}"
+  local ssh_out
+  ssh_out=$(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@github.com 2>&1 || true)
+  if [[ "$ssh_out" =~ "Hi "[A-Za-z0-9_-]+"!" ]]; then
+    bootstrap_ok "$(printf '%s' "$ssh_out" | head -1)"
+  else
+    bootstrap_fail "ssh -T git@github.com did not greet — check ~/.ssh/ and that the key is added to github.com"
+    printf '         %s\n' "$ssh_out" | head -3
+  fi
+  echo
+
+  # 8. Git identity.
+  echo "${C_BOLD}8. Git identity (~/.gitconfig)${C_RESET}"
+  local git_name git_email
+  git_name=$(git config --global --get user.name 2>/dev/null || echo "")
+  git_email=$(git config --global --get user.email 2>/dev/null || echo "")
+  if [[ -z "$git_name" || -z "$git_email" ]]; then
+    bootstrap_fail "git user.name / user.email not set — restore ~/.gitconfig from migration bundle"
+  else
+    bootstrap_ok "$git_name <$git_email>"
+  fi
+  echo
+
+  # 9. Remove the legacy session-spawn shell function (HMB-98 Tier-2: the
+  #    HMB-87 B.12 auto-spawn model is gone; bootstrap now uninstalls the
+  #    claude() function so sessions launch in the main checkout).
+  echo "${C_BOLD}9. Remove legacy session-spawn shell function (HMB-98)${C_RESET}"
+  local rc_file
+  rc_file="$(_bootstrap_pick_rc_file)"
+  local install_rc=0
+  local install_msg
+  install_msg="$(_bootstrap_remove_claude_fn "$rc_file")" || install_rc=$?
+  case $install_rc in
+    0) bootstrap_ok "$install_msg" ;;
+    2) bootstrap_warn "$install_msg" ;;
+    *) bootstrap_fail "$install_msg" ;;
+  esac
+  echo
+
+  # Summary.
+  echo "${C_BOLD}Summary:${C_RESET} $pass OK / $warns WARN / $fails FAIL"
+  if [[ $fails -gt 0 ]]; then
+    err "bootstrap incomplete — fix [FAIL] items above and re-run 'homebase bootstrap'"
+    return 1
+  fi
+  if [[ $warns -gt 0 ]]; then
+    warn "bootstrap finished with warnings — review [WARN] items above"
+  fi
+  ok "bootstrap clean. Open Claude Code and verify MCP servers connect (SOP-014 § Phase 3)."
+  return 0
+}
+
+# ── dispatch ───────────────────────────────────────────────────────────────────
+
+VERB="${1:-help}"
+shift || true
+
+case "$VERB" in
+  link)         cmd_link "$@" ;;
+  link-project) cmd_link_project "$@" ;;
+  migrate)      cmd_migrate "$@" ;;
+  status)       cmd_status "$@" ;;
+  bootstrap)    cmd_bootstrap "$@" ;;
+  sync)         cmd_sync "$@" ;;
+  register)     cmd_register "$@" ;;
+  index)        cmd_index "$@" ;;
+  list)         cmd_list "$@" ;;
+  deploy)       cmd_deploy "$@" ;;
+  rollback)     cmd_rollback "$@" ;;
+  env)          cmd_env "$@" ;;
+  console)      cmd_console "$@" ;;
+  roadmap)      cmd_roadmap "$@" ;;
+  work)         cmd_work "$@" ;;
+  auth)         cmd_auth "$@" ;;
+  settings)     cmd_settings "$@" ;;
+  deps)         cmd_deps "$@" ;;
+  render-claudemd) cmd_render_claudemd "$@" ;;
+  protect)      exec "$HOMEBASE/scripts/protect.sh" "$@" ;;
+  roster)       cmd_roster "$@" ;;
+  sops)         cmd_sops "$@" ;;
+  help|-h|--help) usage ;;
+  *) err "unknown verb: $VERB"; usage; exit 2 ;;
+esac

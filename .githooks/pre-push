@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — invoked by git before push.
+#
+# Thin wrapper that delegates to scripts/hooks/pre-push.sh.
+# Both this file and the implementation are symlinked into adopting
+# projects by `bin/homebase link-project`.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+exec "$REPO_ROOT/scripts/hooks/pre-push.sh" "$@"

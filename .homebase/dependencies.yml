@@ -1,0 +1,30 @@
+# Pinned third-party dependencies. Bootstrap (`bin/homebase bootstrap`)
+# installs the listed `version` of each dependency and FAILS (not warns)
+# if the installed binary's version or any vendored content drifts from
+# what is recorded here.
+#
+# Updates require a human-reviewed commit: bump the version + sync any
+# vendored content (e.g. SKILL.md) in a single commit on a chore-kind
+# issue. See sops/HOMEBASE-SOP-015-APPLE_TOOLCHAIN.md for the policy.
+#
+# Schema: schemas/dependencies.schema.json
+
+schema_version: 1
+
+dependencies:
+  xcodebuildmcp:
+    version: "2.5.2"
+    install:
+      brew_tap: "getsentry/xcodebuildmcp"
+      brew_formula: "xcodebuildmcp"
+    vendored:
+      - source: "skills/xcodebuildmcp-cli/SKILL.md"
+        # Upstream file installed by the brew formula. The exact path is
+        # version-scoped under the Cellar so the runtime can locate the
+        # upstream-for-pinned-version copy without re-running
+        # `xcodebuildmcp init`.
+        upstream_path: "/opt/homebrew/Cellar/xcodebuildmcp/{version}/libexec/skills/xcodebuildmcp-cli/SKILL.md"
+    enforced_by:
+      - "bin/homebase (bootstrap_xcodebuildmcp)"
+      - "scripts/hooks/xcodebuild-cli-guard-hook.sh"
+    sop: "HOMEBASE-SOP-015"

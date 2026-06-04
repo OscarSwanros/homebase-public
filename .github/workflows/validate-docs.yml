@@ -1,0 +1,46 @@
+name: Validate Docs (homebase)
+
+# Reusable workflow — invoked by project repos via:
+#
+#   jobs:
+#     validate-docs:
+#       uses: acme-co/homebase/.github/workflows/validate-docs.yml@<sha>
+#
+# Runs HOMEBASE-SOP-003 documentation validation against the caller repo.
+# Universal checks are built into homebase/scripts/validate-docs.sh.
+# Project-specific checks extend via scripts/validate-docs-project.sh in
+# the caller repo.
+
+on:
+  workflow_call:
+    inputs:
+      homebase-ref:
+        description: "Homebase ref to check out (branch, tag, or SHA). Defaults to main."
+        required: false
+        default: "main"
+        type: string
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repo
+        uses: actions/checkout@v4
+
+      - name: Check out homebase
+        uses: actions/checkout@v4
+        with:
+          repository: acme-co/homebase
+          ref: ${{ inputs.homebase-ref }}
+          path: .homebase-checkout
+
+      - name: Stage homebase scripts into caller workspace
+        run: |
+          mkdir -p scripts/hooks scripts/lib
+          # Copy (not symlink) so the caller's workspace is self-contained
+          # for this one run.
+          cp .homebase-checkout/scripts/validate-docs.sh scripts/validate-docs.sh
+          chmod +x scripts/validate-docs.sh
+
+      - name: Run validate-docs
+        run: ./scripts/validate-docs.sh

@@ -1,0 +1,95 @@
+name: Validate Workflow YAML (homebase)
+
+# Reusable workflow — invoked by project repos via:
+#
+#   jobs:
+#     validate-workflow-yml:
+#       uses: acme-co/homebase/.github/workflows/validate-workflow-yml.yml@<sha>
+#
+# Schema-validates the caller repo's <project-path>/.homebase/workflow.yml
+# against ~/code/homebase/schemas/workflow.schema.json. Fails the workflow
+# if the YAML is missing, malformed, or non-conformant.
+#
+# Schema: schemas/workflow.schema.json (JSON Schema draft 2020-12).
+# Standard: standards/WORKFLOW_CONTRACT.md.
+
+on:
+  workflow_call:
+    inputs:
+      homebase-ref:
+        description: "Homebase ref to check out (branch, tag, or SHA). Defaults to main."
+        required: false
+        default: "main"
+        type: string
+      project-path:
+        description: "Path to the project root inside the caller repo. Defaults to '.'."
+        required: false
+        default: "."
+        type: string
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repo
+        uses: actions/checkout@v4
+
+      - name: Check out homebase
+        uses: actions/checkout@v4
+        with:
+          repository: acme-co/homebase
+          ref: ${{ inputs.homebase-ref }}
+          path: .homebase-checkout
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install validators
+        run: pip install --quiet jsonschema PyYAML
+
+      - name: Validate workflow.yml against schema
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os, sys, yaml, jsonschema
+
+          project = os.environ["PROJECT_PATH"].rstrip("/") or "."
+          wf_path = f"{project}/.homebase/workflow.yml"
+          schema_path = ".homebase-checkout/schemas/workflow.schema.json"
+
+          if not os.path.isfile(wf_path):
+              print(f"FAIL: {wf_path} not found", file=sys.stderr)
+              sys.exit(1)
+          if not os.path.isfile(schema_path):
+              print(f"FAIL: schema {schema_path} not found in homebase checkout", file=sys.stderr)
+              sys.exit(1)
+
+          with open(schema_path) as f:
+              schema = json.load(f)
+          jsonschema.Draft202012Validator.check_schema(schema)
+
+          with open(wf_path) as f:
+              try:
+                  doc = yaml.safe_load(f)
+              except yaml.YAMLError as e:
+                  print(f"FAIL: {wf_path} is not valid YAML: {e}", file=sys.stderr)
+                  sys.exit(1)
+
+          if doc is None:
+              print(f"FAIL: {wf_path} is empty", file=sys.stderr)
+              sys.exit(1)
+
+          validator = jsonschema.Draft202012Validator(schema)
+          errors = sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path))
+          if errors:
+              for err in errors:
+                  loc = "/".join(str(p) for p in err.absolute_path) or "(root)"
+                  print(f"FAIL: {wf_path}: {loc}: {err.message}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"OK: {wf_path} validates against {schema_path}")
+          PY

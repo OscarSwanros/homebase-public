@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# git commit-msg hook — enforce HOMEBASE-SOP-001 issue-reference trailers.
+#
+# Called by git with the path to the proposed commit message as $1.
+# Delegates to scripts/hooks/commit-sop-check.sh so the same validator
+# backs both this hook and the Claude PreToolUse wrapper.
+#
+# Runs on every `git commit` once `core.hooksPath=.githooks` is set. The
+# Claude precommit hook self-heals this; in fresh clones, run:
+#   git config core.hooksPath .githooks
+#
+# Canonical source: ~/code/homebase/.githooks/commit-msg
+# Symlinked into each project; edit in homebase and the symlink picks up changes immediately.
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ -z "$REPO_ROOT" ]]; then
+  exit 0
+fi
+
+"$REPO_ROOT/scripts/hooks/commit-sop-check.sh" "$1" || exit $?
+
+if [[ -x "$REPO_ROOT/scripts/hooks/commit-changelog-check.sh" ]]; then
+  exec "$REPO_ROOT/scripts/hooks/commit-changelog-check.sh" "$1"
+fi

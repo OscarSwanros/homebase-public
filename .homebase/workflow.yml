@@ -1,0 +1,126 @@
+# .homebase/workflow.yml — homebase's own workflow contract.
+#
+# Phase 4 of the SOP-prose → workflow-contract migration: homebase eats
+# its own dog food. After this file lands, every commit in the homebase
+# repo is gated by the same hooks every adopting project gets — except
+# homebase has no apps/ tree, so app-scope coherence checks never fire.
+
+version: 1
+primary_tracker: linear
+
+linear:
+  state_kinds:
+    backlog:     ["Backlog", "Triage"]
+    in_progress: ["In Progress"]
+    in_review:   ["In Review"]
+    done:        ["Done", "Canceled"]
+  required_labels_at_start: []  # HMB-32: no labels required — every Linear issue is by definition tracked work
+
+start_gates:
+  issue_required: true
+  issue_must_exist: true
+  issue_must_be_in_correct_project: true
+  issue_must_have_acceptance_criteria: true
+  issue_must_have_required_labels: true
+  tree_must_be_clean: true
+  branch_must_be_main_or_clean: true
+  plan_approval_required: false
+
+finish_gates:
+  tree_must_be_clean: true
+  all_branch_commits_reference_issue: true
+  last_commit_has_closing_keyword: true
+  validate_command_must_pass: true
+  docs_validate_must_pass: true
+  changelog_updated_for_feat_fix: false   # homebase has no per-app CHANGELOGs
+  ui_verification_present: false          # CLI / governance — no rendered UI
+  branch_must_be_pushed: true
+
+required_agents:
+  by_change_kind:
+    architecture:  [technical-project-manager]
+    governance:    [technical-project-manager]
+
+required_checks:
+  - name: validate_docs
+    command: scripts/validate-docs.sh
+    when: on_finish
+    blocking: true
+  - name: workflow_schema_check
+    command: |
+      python3 -c "
+      import json, sys
+      sys.path.insert(0, '$HOME/Library/Python/3.9/lib/python/site-packages')
+      import jsonschema, yaml
+      jsonschema.Draft202012Validator(json.load(open('schemas/workflow.schema.json'))).validate(yaml.safe_load(open('.homebase/workflow.yml')))
+      jsonschema.Draft202012Validator(json.load(open('schemas/workflow.schema.json'))).validate(yaml.safe_load(open('templates/workflow.yml.tmpl')))
+      print('OK')
+      "
+    when: on_finish
+    blocking: true
+  - name: work_cli_tests
+    command: bash scripts/work/_test_work.sh
+    when: on_finish
+    blocking: true
+  - name: settings_doctor_tests
+    command: bash scripts/settings/_test_settings.sh
+    when: on_finish
+    blocking: true
+  - name: ui_pattern_tests
+    command: bash scripts/hooks/_test_ui_pattern.sh
+    when: on_finish
+    blocking: true
+  - name: xcodebuild_guard_tests
+    command: bash scripts/hooks/_test_xcodebuild_guard.sh
+    when: on_finish
+    blocking: true
+  - name: dependencies_schema_check
+    command: |
+      python3 -c "
+      import json, sys
+      sys.path.insert(0, '$HOME/Library/Python/3.9/lib/python/site-packages')
+      import jsonschema, yaml
+      jsonschema.Draft202012Validator(json.load(open('schemas/dependencies.schema.json'))).validate(yaml.safe_load(open('.homebase/dependencies.yml')))
+      print('OK')
+      "
+    when: on_finish
+    blocking: true
+  - name: bootstrap_helpers_tests
+    command: bash scripts/_test_bootstrap_helpers.sh
+    when: on_finish
+    blocking: true
+  - name: plan_approval_reminder_tests
+    command: bash scripts/hooks/_test_plan_approval_reminder.sh
+    when: on_finish
+    blocking: true
+  - name: push_recovery_tests
+    command: bash scripts/deploy/_test_push_recovery.sh
+    when: on_finish
+    blocking: true
+
+branch:
+  base: main
+  naming_pattern: "{scope}/{issue}-{slug}"
+  auto_create: true
+  single_commit_to_main_allowed: true
+
+hard_rules:
+  - gh_via_tpm
+  - linear_via_tpm
+  - linear_issue_creation_requires_ac
+  - no_no_verify
+  - issue_first
+  - one_issue_per_commit_scope
+  - trailer_keywords_only
+  - commit_must_close_issue_at_end
+  - no_uncommitted_at_session_end
+  - xcodebuild_via_mcp_cli
+
+session_end:
+  require_homebase_work_finish: true
+
+notes: |
+  Homebase is governance + CLI only. No app-platform UI to verify, no
+  per-app CHANGELOGs. The contract here is intentionally lean; each
+  adopting project (studio, field-suite, ...) will declare
+  its own with full UI verification, changelog, and PR gates.

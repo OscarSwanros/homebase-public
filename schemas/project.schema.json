@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/acme-co/homebase/main/schemas/project.schema.json",
+  "title": "Homebase Project Declaration",
+  "description": "Schema for <project>/.homebase/project.yml. Declares a project to homebase so it appears in registry/PROJECTS.md.",
+  "type": "object",
+  "required": ["name", "display_name", "description", "kind", "domains", "apps"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "description": "kebab-case slug; must match the project directory basename."
+    },
+    "display_name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["monorepo", "single-app"] },
+    "domains": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "brands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "display_name"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "display_name": { "type": "string", "minLength": 1 },
+          "audience": { "type": "string" }
+        }
+      }
+    },
+    "apps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "path", "platforms", "status", "summary"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+          "path": { "type": "string", "minLength": 1 },
+          "platforms": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          },
+          "status": { "enum": ["active", "research", "retired", "planned"] },
+          "summary": { "type": "string", "minLength": 1 },
+          "aliases": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          },
+          "github": {
+            "type": "string",
+            "pattern": "^[^/\\s]+/[^/\\s]+$",
+            "description": "owner/repo"
+          },
+          "brand": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "changelog": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional. Repo-relative path to the app's CHANGELOG.md, used by scripts/hooks/commit-changelog-check.sh (HMB-26) when the changelog lives outside the default `<path>/CHANGELOG.md` location. Example for SHOPOS: 'ShopOS/Documentation/Release/CHANGELOG.md'."
+          },
+          "extra_paths": {
+            "type": "array",
+            "description": "Optional. Additional repo-relative roots for this app, paired with their own CHANGELOG.md when applicable. Use for multi-platform apps whose source is split across multiple roots (e.g. GasCalc with iOS/Apps/GasCalc + Android/apps/gascalc, each with its own CHANGELOG). The changelog-check hook (HMB-26) treats each entry as a sibling app root: a commit whose staged paths all live under one entry's `path` is enforced against that entry's `changelog` (default `<path>/CHANGELOG.md`).",
+            "items": {
+              "type": "object",
+              "required": ["path"],
+              "additionalProperties": false,
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "changelog": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "roadmap": {
+            "type": "object",
+            "description": "Optional. Enables HOMEBASE-SOP-013 Linear roadmap tracking for this app. Omit or set enabled:false to opt out. Linear IDs are populated by `homebase roadmap capture`; never hand-edited.",
+            "required": ["enabled"],
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "If false, the app is excluded from `homebase roadmap` operations."
+              },
+              "linear_team_key": {
+                "type": "string",
+                "pattern": "^[A-Z]{2,5}$",
+                "description": "Linear team key (monorepo-scoped; one of TBL, TFD, HMB). See standards/LINEAR_WORKSPACE.md § Teams."
+              },
+              "linear_team_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Linear team UUID. Populated by `homebase roadmap capture`."
+              },
+              "linear_project_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Linear Project UUID — the per-app Project inside the monorepo Team. Populated by `homebase roadmap capture`."
+              },
+              "owner_agent": {
+                "enum": [
+                  "example-product-pm",
+                  "example-product-pm",
+                  "example-product-pm",
+                  "diving-product-manager",
+                  "technical-project-manager"
+                ],
+                "description": "PM agent with Project scope and priority authority."
+              },
+              "github_sync": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "auto_create_issues": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Linear auto-creates a mirror GitHub issue when a Linear issue is created."
+                  },
+                  "auto_close_on_pr_merge": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "PR merge referencing a Linear ID auto-closes the Linear issue."
+                  }
+                }
+              }
+            }
+          },
+          "deploy": {
+            "type": "object",
+            "description": "Optional. Wires the app up for `homebase deploy <app> <env>`.",
+            "required": ["image", "version_file", "envs"],
+            "additionalProperties": false,
+            "properties": {
+              "image": {
+                "type": "string",
+                "pattern": "^[^/\\s]+/[^/\\s]+$",
+                "description": "Container image path as <org>/<app>. The registry (typically ghcr.io) is declared separately in the Kamal config's registry.server; Kamal concatenates the two."
+              },
+              "branch": {
+                "type": "string",
+                "default": "main",
+                "description": "Branch deploys must originate from. Defaults to main."
+              },
+              "validate": {
+                "type": "string",
+                "description": "Shell command run in the validate phase. Defaults to bin/ci if omitted."
+              },
+              "version_file": {
+                "type": "object",
+                "required": ["path", "language"],
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Version file path, relative to the app path."
+                  },
+                  "language": {
+                    "enum": ["ruby", "go"],
+                    "description": "Language dispatch for version constant rewriting."
+                  },
+                  "symbol": {
+                    "type": "string",
+                    "description": "Optional display-only name for the constant, e.g. StudioWeb::VERSION."
+                  }
+                }
+              },
+              "envs": {
+                "type": "object",
+                "minProperties": 1,
+                "description": "Deployment environments (production, staging, ...). At least one required.",
+                "additionalProperties": false,
+                "patternProperties": {
+                  "^[a-z][a-z0-9_-]*$": {
+                    "type": "object",
+                    "required": ["hosts", "kamal_config"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "hosts": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": { "type": "string", "minLength": 1 }
+                      },
+                      "traefik_host": {
+                        "type": "string",
+                        "description": "Public hostname served by kamal-proxy (for display and health checks)."
+                      },
+                      "kamal_config": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Path to the Kamal config for this env, relative to the app path."
+                      },
+                      "secrets_file": {
+                        "type": "string",
+                        "description": "Optional. Path to the .kamal/secrets.<env> file. Defaults to .kamal/secrets.<env>."
+                      },
+                      "health_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Optional. Post-deploy HTTP probe URL; must return 2xx."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "ship": {
+            "type": "object",
+            "description": "Optional. Wires the app up for 'homebase work ship <app> <version> <target>'. Mobile/desktop counterpart to the web 'deploy' stanza. The target name → fastlane lane invocation map lives under 'targets'; pre-flight checks (CHANGELOG header, version-file constant) are driven from 'version_file' and 'validate_lane'.",
+            "required": ["tool", "targets"],
+            "additionalProperties": false,
+            "properties": {
+              "tool": {
+                "enum": ["fastlane"],
+                "description": "Toolchain that the verb invokes. Only 'fastlane' today; future entries (e.g. 'sparkle') would land here when their pre-flight + invocation contract is defined."
+              },
+              "fastlane_root": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Repo-relative path to the fastlane root (the directory containing the Fastfile). Defaults to 'fastlane'."
+              },
+              "validate_lane": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Optional fastlane lane name to run as a pre-flight (e.g. 'validate'). Skipped when --skip-validation is passed."
+              },
+              "branch": {
+                "type": "string",
+                "default": "main",
+                "description": "Branch ships must originate from. Defaults to main. Mirrors deploy.branch."
+              },
+              "version_file": {
+                "type": "object",
+                "description": "Path + language of the version constant the verb checks before invoking fastlane.",
+                "required": ["path", "language", "key"],
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Version file path, relative to the app path."
+                  },
+                  "language": {
+                    "enum": ["xcconfig", "gradle-kts", "plist", "pbxproj"],
+                    "description": "Format dispatch for version-constant reading. `pbxproj` reads MARKETING_VERSION-style keys from <app>.xcodeproj/project.pbxproj build settings (HMB-71)."
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Constant name (e.g. MARKETING_VERSION, versionName)."
+                  }
+                }
+              },
+              "targets": {
+                "type": "object",
+                "minProperties": 1,
+                "description": "Per-target fastlane invocation map. Target name (kebab-case) → fastlane app + track + tier. The schema's tag_platform optional override lets one fastlane platform (e.g. ios) ship to multiple stores (e.g. tag form 'gascalc/macos/1.2.0' for the Mac App Store under platform:ios).",
+                "additionalProperties": false,
+                "patternProperties": {
+                  "^[a-z][a-z0-9-]*$": {
+                    "type": "object",
+                    "required": ["fastlane_app", "platform", "track", "tier"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "fastlane_app": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Value passed as app: to fastlane (may differ from the project.yml app name; e.g. gascalc-mac for GasCalc's macOS slice)."
+                      },
+                      "platform": {
+                        "enum": ["ios", "android"],
+                        "description": "Fastlane's platform vocabulary. macOS is platform:ios + store_platform:osx in AppConfig — use tag_platform: macos to override the tag segment."
+                      },
+                      "track": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Value passed as track: to fastlane (testflight | appstore | internal | alpha | beta | production | artifacts)."
+                      },
+                      "tier": {
+                        "enum": ["yellow", "red"],
+                        "description": "Charter tier. red requires HOMEBASE_SHIP_CONFIRMED=1 at the terminal (operator-only env var; not capturable in .claude/settings.local.json's env block)."
+                      },
+                      "tag_platform": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Override for the {platform} segment of the git tag <app>/<platform>/<version>. Defaults to platform; set to 'macos' when shipping macOS under platform:ios."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "notes": { "type": "string" },
+    "worktree": {
+      "type": "object",
+      "description": "Optional. Opts the project into per-task git-worktree isolation (HMB-27). When enabled, `homebase work start <KEY>` creates a worktree at <project>/.worktrees/<branch>/ instead of branching in the project root, so multiple agents on the same project can run in parallel without colliding on tree state, work-state.json, .work-env, or the dev/test database.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "If true, `homebase work start` creates a per-task worktree. Single-branch flow is preserved when false or absent."
+        },
+        "share": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Repo-relative paths from the main checkout to symlink into each new worktree (e.g. `vendor/bundle`, `node_modules`, `tmp/cache`). Trades a small version-skew risk during big migrations for fast `work start` times."
+        },
+        "db_suffix_env": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the environment variable carrying the per-worktree database suffix (default `WORKTREE_DB_SUFFIX`). The app's `database.yml` reads it: `database: foo_dev<%= ENV.fetch(\"WORKTREE_DB_SUFFIX\", \"\") %>`."
+        },
+        "setup_command": {
+          "type": "string",
+          "description": "Shell command run inside the worktree after creation, with the per-worktree DB suffix already exported. Typical: `bin/rails db:create db:migrate db:seed`."
+        },
+        "teardown_command": {
+          "type": "string",
+          "description": "Shell command run inside the worktree before `git worktree remove` on finish/cancel, with the per-worktree DB suffix exported. Typical: `bin/rails db:drop`."
+        }
+      }
+    }
+  }
+}

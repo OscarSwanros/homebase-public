@@ -1,0 +1,28 @@
+# {Project} — known main-branch test failures.
+#
+# Each entry demotes a finish-time validate-passes failure to a warning
+# IF the failing check's output contains the entry's test_id substring.
+# Catches the "pre-existing main-branch failure blocks every work-finish"
+# trap (HMB-45 Finding 3): a test that fails on main today shouldn't
+# block branches that didn't touch it.
+#
+# Entries MUST carry a tracking_issue (the canonical remediation) and an
+# expires_at (forces periodic review). Expired entries hard-fail rather
+# than silently lingering.
+#
+# CI on main ignores this allowlist — that's how new failures get
+# discovered. Don't add an entry to silence a NEW failure; fix it on
+# main and skip the allowlist.
+#
+# Schema: ~/code/homebase/schemas/known-main-failures.schema.json
+
+failures: []
+
+# Example (delete this block once you have a real entry):
+#
+# failures:
+#   - check_name: rails_test
+#     test_id: "Foo::VersionTest#test_VERSION_is_1.0.0"
+#     tracking_issue: TFD-1407
+#     expires_at: 2026-06-30
+#     reason: "Hardcoded VERSION assertion; fix tracked in TFD-1407 — align test with actual constant."

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homebase/known-main-failures.schema.json",
+  "title": "<project>/.homebase/known_main_failures.yml",
+  "description": "Per-project allowlist of test failures that exist on main and should NOT block `homebase work finish` for branches that didn't introduce them. Demoted to a warning when the failing test matches an entry. Each entry MUST carry a tracking issue and an expiry date; expired entries hard-fail rather than silently linger. CI on main ignores the allowlist (catching new failures and discouraging cavalier additions). HMB-45 Finding 3.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["failures"],
+  "properties": {
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check_name", "test_id", "tracking_issue", "expires_at", "reason"],
+        "properties": {
+          "check_name": {
+            "type": "string",
+            "description": "Must match the `name` field of a required_check declared in workflow.yml (e.g. `rails_test`, `validate_docs`)."
+          },
+          "test_id": {
+            "type": "string",
+            "description": "Substring searched for in the failing check's log output. Common forms: `Class#test_name` (Minitest), `it 'spec name'` (RSpec), `test_module.py::TestClass::test_name` (pytest). The match is literal substring (no regex) so quoting is straightforward; choose a unique anchor."
+          },
+          "tracking_issue": {
+            "type": "string",
+            "pattern": "^([A-Z]{2,5}-[0-9]+|#[0-9]+)$",
+            "description": "Linear KEY-N or GitHub #N. The issue MUST exist before the entry is added; the allowlist is not a way to defer triage. Fix on main is the canonical remediation; the allowlist is a tactical bridge until the fix lands."
+          },
+          "expires_at": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "ISO-8601 date (YYYY-MM-DD). After this date the entry hard-fails finish-time rather than demoting. Forces periodic review and prevents indefinite lingering. Set ~3 months out by default; renew explicitly if the underlying fix slips."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "description": "One-sentence explanation of why this failure exists on main and what the fix path looks like. Read by future operators triaging an unfamiliar finish-time warning."
+          }
+        }
+      }
+    }
+  }
+}

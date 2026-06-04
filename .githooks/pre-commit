@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — universal pre-commit hook.
+#
+# Two layers compose:
+#
+#   1. Homebase-only: registry drift check. Fires when registry/, the
+#      project.yml.tmpl template, the registry renderer, or bin/homebase
+#      itself is staged in the homebase repo. Refuses if the generated
+#      registry is out of sync.
+#
+#   2. Universal (any project that adopts homebase): work-state coherence
+#      checks. Fires when .homebase/workflow.yml is present.
+#        - Branch must match work-state.branch.
+#        - Staged paths must lie inside apps/<state.app>/ (when monorepo).
+#        - "Looks like product work but no work-state" — escapable via a
+#          chore:-prefix subject (read from COMMIT_EDITMSG when -m wasn't
+#          passed) or HOMEBASE_OFF_CONTRACT=1 in the environment.
+
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+staged="$(git diff --cached --name-only)"
+[[ -z "$staged" ]] && exit 0
+
+# ── Layer 1: homebase registry drift (only fires inside the homebase repo) ──
+
+if [[ -f "$repo_root/registry/projects.paths" && -x "$repo_root/bin/homebase" ]]; then
+  needs_check=0
+  while IFS= read -r f; do
+    case "$f" in
+      registry/*|templates/project.yml.tmpl|scripts/lib/render-registry.rb|bin/homebase)
+        needs_check=1
+        break
+        ;;
+    esac
+  done <<< "$staged"
+  if [[ "$needs_check" -eq 1 ]]; then
+    if ! "$repo_root/bin/homebase" index --check; then
+      echo
+      echo "pre-commit: registry drift detected." >&2
+      echo "Run 'bin/homebase index' and stage registry/PROJECTS.md, then retry the commit." >&2
+      exit 1
+    fi
+  fi
+fi
+
+# ── Layer 2: universal work-state coherence ─────────────────────────────────
+
+WORKFLOW_YML="$repo_root/.homebase/workflow.yml"
+
+# HMB-87 B.11: resolve the SHA-keyed per-worktree work-state path via the
+# loader. Loader is symlinked into every adopting project at
+# scripts/lib/workflow-loader.sh by `bin/homebase link-project`. Absent it
+# (mid-migration), fall back to the legacy single-file path.
+WORK_STATE=""
+if [[ -f "$repo_root/scripts/lib/workflow-loader.sh" ]]; then
+  # shellcheck source=../scripts/lib/workflow-loader.sh
+  . "$repo_root/scripts/lib/workflow-loader.sh"
+  WORK_STATE="$(work_state_path "$repo_root" 2>/dev/null || echo "")"
+fi
+[[ -z "$WORK_STATE" ]] && WORK_STATE="$repo_root/.homebase/work-state.json"
+
+[[ -f "$WORKFLOW_YML" ]] || exit 0
+
+# Helper to read fields from work-state without sourcing libs (keeps pre-commit
+# fast and dependency-light).
+ws_field() {
+  [[ -f "$WORK_STATE" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -r --arg k "$1" '.[$k] // empty' "$WORK_STATE"
+}
+
+work_active=0
+if [[ -f "$WORK_STATE" ]] && command -v jq >/dev/null 2>&1; then
+  finished=$(jq -r '.finished // false' "$WORK_STATE" 2>/dev/null || echo "true")
+  [[ "$finished" == "false" ]] && work_active=1
+fi
+
+current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+
+if [[ "$work_active" -eq 1 ]]; then
+  expected_branch="$(ws_field branch || true)"
+  expected_app="$(ws_field app || true)"
+
+  # Branch coherence.
+  if [[ -n "$expected_branch" && "$expected_branch" != "$current_branch" ]]; then
+    echo "pre-commit: HEAD on '$current_branch'; work-state declares branch '$expected_branch'." >&2
+    echo "  git checkout $expected_branch" >&2
+    echo "  (or 'homebase work cancel' to abandon the work-state.)" >&2
+    exit 1
+  fi
+
+  # App-scope coherence (only enforced for monorepos that have an apps/ tree).
+  if [[ -n "$expected_app" && -d "$repo_root/apps" ]]; then
+    leaks=""
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      case "$f" in
+        apps/*)
+          if [[ "$f" != "apps/$expected_app/"* ]]; then
+            leaks+="$f"$'\n'
+          fi
+          ;;
+        # Files outside apps/ (governance, root-level configs, etc.) are
+        # allowed — they're cross-cutting by nature.
+      esac
+    done <<< "$staged"
+    if [[ -n "$leaks" ]]; then
+      echo "pre-commit: staged files outside apps/$expected_app/:" >&2
+      echo "$leaks" | sed 's/^/  /' >&2
+      echo "Either move them out of this commit, run 'homebase work amend' (when implemented)," >&2
+      echo "or 'homebase work cancel' and start over." >&2
+      exit 1
+    fi
+  fi
+  exit 0
+fi
+
+# No active work-state. If the staged tree looks like product work AND the
+# subject doesn't begin with 'chore:' AND HOMEBASE_OFF_CONTRACT=1 isn't set,
+# refuse — operator should run 'homebase work start <KEY>' first.
+[[ "${HOMEBASE_OFF_CONTRACT:-0}" == "1" ]] && exit 0
+
+# Read commit subject from COMMIT_EDITMSG (when -m used) or .git/COMMIT_EDITMSG.
+SUBJECT=""
+if [[ -f "$repo_root/.git/COMMIT_EDITMSG" ]]; then
+  SUBJECT="$(head -1 "$repo_root/.git/COMMIT_EDITMSG" 2>/dev/null || echo "")"
+fi
+# Exempt prefixes match commit-sop-check.sh's exempt set (chore:, Release,
+# Post-release:, Merge). 'docs:' and 'style:' are NOT exempt — they still
+# require an issue per HOMEBASE-SOP-001. Use HOMEBASE_OFF_CONTRACT=1 for
+# truly off-contract work that doesn't fit a chore: prefix.
+if echo "$SUBJECT" | grep -Eiq '^chore(\([^)]+\))?:|^(Release |Post-release:|Merge )'; then
+  exit 0
+fi
+
+# Heuristic: if the staged tree only touches non-product paths (governance/,
+# sops/, standards/, .github/, README.md), allow.
+product_seen=0
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  case "$f" in
+    governance/*|sops/*|standards/*|.github/*|.githooks/*|.claude/*|registry/*|README.md|CLAUDE.md|*.md)
+      ;;
+    *)
+      product_seen=1
+      ;;
+  esac
+done <<< "$staged"
+
+if [[ "$product_seen" -eq 1 ]]; then
+  echo "pre-commit: this looks like product work but no .homebase/work-state.json exists." >&2
+  echo "  Run 'homebase work start <KEY>' first, or use a 'chore:'/'docs:'/'style:' subject" >&2
+  echo "  prefix, or set HOMEBASE_OFF_CONTRACT=1 for the duration of this commit." >&2
+  exit 1
+fi
+
+exit 0

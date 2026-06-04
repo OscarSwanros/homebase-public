@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/acme-co/homebase/main/schemas/linear-workspace.schema.json",
+  "title": "Linear Workspace Specification",
+  "description": "Machine-readable spec of the canonical Linear workspace topology governed by HOMEBASE-SOP-013. Used by `homebase roadmap audit` to detect drift between live Linear state and the expected shape defined in standards/LINEAR_WORKSPACE.md.",
+  "type": "object",
+  "required": ["workspace", "teams", "projects", "canonical_labels"],
+  "additionalProperties": false,
+  "properties": {
+    "workspace": {
+      "type": "object",
+      "required": ["single_workspace", "api_key_source"],
+      "additionalProperties": false,
+      "properties": {
+        "single_workspace": {
+          "const": true,
+          "description": "Only one Linear workspace is authorized. Do not create a second."
+        },
+        "api_key_source": {
+          "type": "string",
+          "const": "~/.config/homebase/env",
+          "description": "Per-machine env file containing LINEAR_API_KEY=... (chmod 600). Checked by scripts/roadmap/linear.rb and scripts/lib/linear-api-helper.sh after $LINEAR_API_KEY in the process environment."
+        }
+      }
+    },
+    "teams": {
+      "type": "array",
+      "description": "Canonical Team registry (monorepos). Every entry MUST exist in Linear; no additional teams may exist without being added here first.",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["key", "name"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z]{2,5}$",
+            "description": "Immutable Linear team key (issue-ID prefix)."
+          },
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "description": "Canonical Projects (apps) registry. Each Project lives inside a Team.",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["app_slug", "team_key", "name", "owner_agent"],
+        "additionalProperties": false,
+        "properties": {
+          "app_slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "description": "App slug as it appears in registry/PROJECTS.md."
+          },
+          "team_key": {
+            "type": "string",
+            "pattern": "^[A-Z]{2,5}$",
+            "description": "Team the app's Project lives inside."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Project name (the app's display name; no version suffix)."
+          },
+          "owner_agent": {
+            "enum": [
+              "example-product-pm",
+              "example-product-pm",
+              "example-product-pm",
+              "diving-product-manager",
+              "technical-project-manager"
+            ],
+            "description": "PM agent with scope and priority authority for this Project."
+          }
+        }
+      }
+    },
+    "canonical_labels": {
+      "type": "array",
+      "description": "Every Team MUST have these labels. Additional per-Project labels are permitted but must not collide.",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 },
+      "const": ["roadmap", "p0", "p1", "p2", "p3", "blocked"]
+    },
+    "milestone_naming": {
+      "type": "object",
+      "description": "Milestones represent releases. Name format is strict SemVer.",
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "const": "^v\\d+\\.\\d+\\.\\d+$"
+        }
+      }
+    },
+    "initiative_naming": {
+      "type": "object",
+      "description": "Initiatives name format: `<Theme or Quarter> — <Scope>`.",
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "const": "^.+ [\\u2014-] .+$"
+        }
+      }
+    },
+    "snapshot_freshness_hours": {
+      "type": "integer",
+      "default": 48,
+      "description": "Maximum age of registry/roadmap-snapshot.yml before audit fails."
+    }
+  }
+}

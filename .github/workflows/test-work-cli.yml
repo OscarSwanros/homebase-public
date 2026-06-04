@@ -1,0 +1,40 @@
+name: Test Work CLI (homebase)
+
+# Runs scripts/work/_test_work.sh on every PR that touches the work CLI
+# substrate. Exercises help/init/status/cancel + state.sh lifecycle + the
+# pure-shell gates (state-loaded, branch-on-track, tree-clean).
+#
+# Heavy gates (validate, push, PR, Linear move) are NOT exercised here —
+# they require live credentials and are validated end-to-end in Phase 4
+# (homebase self-host) and the Phase 5 reusable workflows.
+
+on:
+  pull_request:
+    paths:
+      - 'bin/homebase'
+      - 'scripts/work/**'
+      - 'scripts/lib/workflow-loader.sh'
+      - 'scripts/lib/issue-trailer.sh'
+      - 'schemas/workflow.schema.json'
+      - 'templates/workflow.yml.tmpl'
+      - '.github/workflows/test-work-cli.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'bin/homebase'
+      - 'scripts/work/**'
+      - 'scripts/lib/workflow-loader.sh'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Run work-cli fixture tests
+        run: bash scripts/work/_test_work.sh

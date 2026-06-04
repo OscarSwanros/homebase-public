@@ -1,0 +1,25 @@
+# .homebase/project.yml — homebase's own declaration to the registry.
+# Aggregated into registry/PROJECTS.md by `bin/homebase index`.
+
+name: homebase
+display_name: "Homebase"
+description: "Single source of truth for SOPs, agents, skills, scripts, and standards across every project."
+kind: single-app
+domains: [governance, cli]
+
+apps:
+  - name: homebase
+    path: .
+    platforms: [cli]
+    status: active
+    summary: "Governance, CLI, and substrate that every other project consumes."
+    aliases: [homebase]
+    github: your-org/homebase
+    roadmap:
+      enabled: true
+      linear_team_key: HMB
+      # linear_team_id populated by `homebase roadmap capture`; do not hand-edit.
+      owner_agent: technical-project-manager
+      github_sync:
+        auto_create_issues: true
+        auto_close_on_pr_merge: true

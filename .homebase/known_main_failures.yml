@@ -1,0 +1,24 @@
+# homebase — known main-branch test failures.
+#
+# Each entry demotes a finish-time validate-passes failure to a warning
+# IF the failing check's output contains the entry's test_id substring.
+# Catches the "pre-existing main-branch failure blocks every work-finish"
+# trap (HMB-45 Finding 3): a test that fails on main today shouldn't
+# block branches that didn't touch it.
+#
+# Entries MUST carry a tracking_issue (the canonical remediation) and an
+# expires_at (forces periodic review). Expired entries hard-fail rather
+# than silently lingering.
+#
+# CI on main ignores this allowlist — that's how new failures get
+# discovered. Don't add an entry to silence a NEW failure; fix it on
+# main and skip the allowlist.
+#
+# Schema: ~/code/homebase/schemas/known-main-failures.schema.json
+
+failures:
+  - check_name: work_cli_tests
+    test_id: "HMB-86 B.4: guard deny"
+    tracking_issue: HMB-120
+    expires_at: 2026-08-26
+    reason: "Test isolation defect — work-cli-guard-hook.sh resolves WORK_STATE from parent session when test fixture runs inside an active homebase work finish, suppressing the deny branch. Three B.4 assertions (chore-verb / OFF_CONTRACT / rule 6) fail. Fix tracked in HMB-120 (test-side isolation or hook tightening); allowlist unblocks unrelated HMB finishes until then."

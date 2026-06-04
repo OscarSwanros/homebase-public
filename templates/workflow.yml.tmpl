@@ -1,0 +1,157 @@
+# .homebase/workflow.yml — declare this project's workflow contract.
+#
+# `homebase work` reads this file (plus .homebase/project.yml) to know how
+# work happens here: which issue tracker, which gates fire, which agents
+# must consult, which checks block finish. Replace SOP prose as the
+# operative control plane.
+#
+# Schema: ~/code/homebase/schemas/workflow.schema.json (JSON Schema 2020-12).
+# Standard: ~/code/homebase/standards/WORKFLOW_CONTRACT.md (canonical reference).
+# Generation: every project's root CLAUDE.md is rendered from this file via
+# `bin/homebase render-claudemd`. Edit this, run that, commit both.
+
+# Required — schema version. The CLI refuses unknown versions.
+version: 1
+
+# Required — `linear` is canonical per HOMEBASE-SOP-013; `github` only for
+# projects that haven't adopted Linear roadmap tracking.
+primary_tracker: linear
+
+# Required when primary_tracker == linear. Maps the four canonical workflow
+# kinds to the Linear team-state names this project's team uses. The CLI
+# reads live state-list at command time and uses the first matching entry.
+linear:
+  state_kinds:
+    backlog:     ["Backlog", "Triage"]
+    in_progress: ["In Progress"]
+    in_review:   ["In Review"]
+    done:        ["Done", "Canceled"]
+  required_labels_at_start: []             # set ["foo", "bar"] to require those labels at work-start; default empty per HMB-32
+
+# Required — gates evaluated by `homebase work start`. Defaults conservative.
+start_gates:
+  issue_required: true
+  issue_must_exist: true
+  issue_must_be_in_correct_project: true
+  issue_must_have_acceptance_criteria: true
+  issue_must_have_required_labels: true
+  tree_must_be_clean: true
+  branch_must_be_main_or_clean: true
+  plan_approval_required: false             # default off; Plan-mode is implicit confirmation
+
+# Required — gates evaluated by `homebase work finish`. Defaults conservative.
+finish_gates:
+  tree_must_be_clean: true
+  all_branch_commits_reference_issue: true
+  last_commit_has_closing_keyword: true
+  validate_command_must_pass: true
+  docs_validate_must_pass: true
+  changelog_updated_for_feat_fix: true
+  ui_verification_present: true
+  branch_must_be_pushed: true
+
+# Optional — HOMEBASE-SOP-005 phases as gates for `homebase work ship`.
+# release_gates:
+#   changelog_unreleased_must_be_nonempty: true
+#   version_bump_required: true
+#   store_metadata_must_be_localized: false # iOS/Android: true; web: false
+#   store_release_notes_must_exist: false   # iOS/Android: true
+#   tag_must_be_annotated: true
+#   tag_format: "{app}/{platform}/{version}"
+#   linear_milestone_must_exist: true       # per HOMEBASE-SOP-013
+
+# Optional — change-type → required agents. Agent slugs must exist in
+# ~/code/homebase/agents/. The CLI computes the union at finish time.
+required_agents:
+  by_platform:
+    ios:     [swift-architect, ui-ux-designer]
+    macos:   [swift-architect, ui-ux-designer]
+    android: [kotlin-systems-architect, ui-ux-designer]
+    web:     [rails-architect]
+    go:      [go-architect]
+  by_change_kind:
+    ui:               [ui-ux-designer]
+    copy:             [copywriter]
+    architecture:     [technical-project-manager]
+    safety_critical:  [dive-science-advisor]            # safety-critical apps only
+  # path_scoped:                                          # optional, for content-vs-code splits
+  #   - paths: ["apps/<app>/content/**"]
+  #     by_change_kind:
+  #       copy: [copywriter, example-reviewer, example-reviewer,
+  #              example-reviewer, example-reviewer]
+
+# Optional — project-level named checks. Per-app overrides REPLACE the array.
+#
+# Optional `paths:` glob array per check (HMB-15). When present, the check
+# runs only when at least one path in the diff matches at least one glob;
+# otherwise it's skipped with reason. Use for platform-scoped or app-scoped
+# validation in monorepos: an iOS-only commit on a multi-platform app
+# skips the Android validate. When `paths:` is absent, the check always runs.
+#
+#   - name: ios_build
+#     command: bundle exec fastlane test app:gascalc platform:ios
+#     when: on_finish
+#     blocking: true
+#     paths:
+#       - "iOS/Apps/GasCalc/**"
+#       - "iOS/Shared/**"
+#       - "Multiplatform/**"
+#       - "fastlane/**"
+required_checks:
+  - name: validate_docs
+    command: scripts/validate-docs.sh
+    when: on_finish
+    blocking: true
+
+# Optional — branch policy.
+branch:
+  base: main
+  naming_pattern: "{scope}/{issue}-{slug}"
+  auto_create: true
+  single_commit_to_main_allowed: true        # per HOMEBASE-SOP-001 §B6
+
+# Required — hard rules adopted by this project. Slugs must exist in
+# ~/code/homebase/governance/HARD_RULES.yml. Render-claudemd joins them
+# when rendering the project's <!-- BEGIN homebase:hard-rules --> section.
+hard_rules:
+  - gh_via_tpm
+  - linear_via_tpm
+  - linear_issue_creation_requires_ac
+  - no_no_verify
+  - issue_first
+  - one_issue_per_commit_scope
+  - trailer_keywords_only
+  - commit_must_close_issue_at_end
+  - no_uncommitted_at_session_end
+  - ui_verification_mandatory
+  - apple_ui_verification_xcuitest    # adopt only on projects that ship Apple-platform apps
+  - changelog_required_on_app_commits # adopt on projects with apps/<slug>/CHANGELOG.md
+  - architect_mandatory_for_code
+
+# Optional — composes with the Claude Code TaskCompleted hook.
+session_end:
+  require_homebase_work_finish: true         # default; blocks task close until finish ran
+
+# Optional — per-app overrides. Keys are app slugs from .homebase/project.yml.
+# Same shape as the top-level minus `version` and `apps`. Merge semantics:
+# deep-merge for objects, REPLACE for arrays.
+#
+# apps:
+#   <app-slug>:
+#     # finish_gates merge with project defaults (object deep-merge):
+#     finish_gates:
+#       apple_ui_xcuitest_required: true
+#     # required_checks REPLACES the project-level array:
+#     required_checks:
+#       - name: app_validate
+#         command: bin/preflight
+#         when: on_finish
+#         blocking: true
+#     # required_agents merges; arrays inside REPLACE:
+#     required_agents:
+#       by_change_kind:
+#         safety_critical: [dive-science-advisor, swift-architect]
+
+# Optional — free-form notes for human readers. Ignored by the CLI.
+# notes: |
+#   Project-specific context that doesn't fit any other field goes here.

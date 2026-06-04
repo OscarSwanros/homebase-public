@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "description": "Recurring task manifest for homebase. Read at session start to surface overdue cross-project governance work. Cadence is advisory; the audit-governance entry's last_run is updated by /audit-governance Phase 'After Completion'.",
+  "tasks": [
+    {
+      "id": "audit-governance",
+      "skill": "/audit-governance",
+      "args": "",
+      "scope": "suite",
+      "cadence_days": 90,
+      "last_run": "2026-05-15"
+    }
+  ]
+}

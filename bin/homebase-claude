@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# bin/homebase-claude — pass-through launcher for Claude Code CLI.
+#
+# HMB-98 (Tier-2 simplification): this wrapper NO LONGER auto-spawns a
+# per-session worktree. The HMB-87 B.12 auto-spawn-every-session model was
+# removed because its failure modes (destroying worktrees under live sessions,
+# vanishing the CWD mid-command, keying transcripts to ephemeral paths, and
+# launching sessions in a bare worktree that never inherited the operator's
+# .claude/settings.local.json env) cost far more than the rare parallel-agent
+# collision it prevented.
+#
+# The replacement model is simpler and deterministic:
+#   - Sessions launch in the project's MAIN checkout and read freely there.
+#     They inherit main's settings.local.json env (e.g. LINEAR_TPM_AUTHORIZED)
+#     at fork — no propagation, no relaunch.
+#   - The moment you WRITE, `homebase work start <KEY>` (or `homebase work
+#     chore "<desc>"`) creates a per-task worktree and you cd into it. Worktrees
+#     are born by an explicit verb and destroyed by an explicit finish/cancel —
+#     never by a heuristic Stop hook.
+#   - `edit-main-checkout-guard.sh` is the enforcer of "no editing main without
+#     an active work-state."
+#
+# This file remains as a thin pass-through so any lingering caller (an old
+# `claude()` shell function not yet refreshed by `homebase bootstrap`) keeps
+# working. `homebase bootstrap` removes the shell function; once removed, the
+# real `claude` is invoked directly and this file is never reached.
+
+exec command claude "$@"

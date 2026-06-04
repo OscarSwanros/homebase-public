@@ -1,0 +1,160 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "mcp__claude-in-chrome__navigate",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__claude-in-chrome__read_page",
+      "mcp__plugin_github_github__issue_read",
+      "Bash(bin/homebase status)",
+      "Bash(bin/homebase status *)",
+      "Bash(/Users/youruser/code/homebase/bin/homebase status)",
+      "Bash(/Users/youruser/code/homebase/bin/homebase status *)",
+      "Bash(bin/homebase list)",
+      "Bash(brew --version)",
+      "Bash(brew list)",
+      "Bash(brew list *)",
+      "Bash(brew services list)",
+      "Bash(bundle -v)",
+      "Bash(mise --version)",
+      "Bash(mise current)",
+      "Bash(mise current *)",
+      "Bash(pg_isready)",
+      "Bash(pg_isready *)",
+      "Bash(psql -l)",
+      "Bash(bin/rails about)",
+      "Bash(bin/rails routes)",
+      "Bash(bin/rails routes *)",
+      "Bash(bin/rails db:version)",
+      "Edit(/Users/youruser/.config/homebase/env)",
+      "Write(/Users/youruser/.config/homebase/env)",
+      "Edit(/Users/youruser/code/**/.kamal/secrets)",
+      "Edit(/Users/youruser/code/**/config/deploy.*.yml)",
+      "Bash(chmod 600 *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/claude-precommit.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/gh-cli-guard-hook.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/linear-cli-guard-hook.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/xcodebuild-cli-guard-hook.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/work-cli-guard-hook.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__plugin_linear_linear__save_issue",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/linear-cli-guard-hook.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/edit-main-checkout-guard.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/task-created.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/task-completed.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/session-start.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/teammate-idle.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/ui-verification-check.sh\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/code/homebase/scripts/hooks/session-end-cleanup.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/statusline-command.sh"
+  },
+  "enabledPlugins": {
+    "linear@claude-plugins-official": true,
+    "sentry@claude-plugins-official": true
+  }
+}

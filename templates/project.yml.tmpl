@@ -1,0 +1,86 @@
+# .homebase/project.yml — declare this project to homebase.
+#
+# Homebase aggregates every registered project's declaration into
+# ~/code/homebase/registry/PROJECTS.md via `bin/homebase index`.
+# Fill in the values below, then run `bin/homebase index` from homebase.
+
+# Required — must match the project directory basename.
+name: PROJECT_NAME
+
+# Required — human-readable name shown in the registry.
+display_name: ""
+
+# Required — one-line description.
+description: ""
+
+# Required — monorepo (contains multiple apps) or single-app.
+kind: single-app
+
+# Required — free-form platform/domain tags. Examples: web, ios, android, macos, cli.
+domains: []
+
+# Optional — only for brand-architected monorepos. Remove this block otherwise.
+# brands:
+#   - id: brand-slug
+#     display_name: "Brand Name"
+#     audience: "who this brand is for"
+
+# Required — at least one app. Single-app projects list one entry with path: "."
+apps:
+  - name: APP_NAME
+    path: .
+    platforms: []           # e.g. [ios], [web], [ios, android]
+    status: active          # active | research | retired | planned
+    summary: ""             # one line
+    # aliases: []           # optional — common names, short forms, typos
+    # github: owner/repo    # optional
+    # brand: brand-slug     # optional — only if `brands:` is present
+    # deploy:               # optional — wires `homebase deploy <app> <env>`; web apps should fill this in
+    #   image: OWNER/APP_NAME                    # <org>/<app>; Kamal prepends the registry.
+    #   version_file:
+    #     path: config/initializers/version.rb   # Rails: `module App; VERSION = "X.Y.Z"; end`
+    #     language: ruby                         # or `go` for `const Version = "X.Y.Z"`
+    #     symbol: App::VERSION                   # display-only
+    #   validate: bin/ci                         # optional; default `bin/ci`
+    #   envs:
+    #     production:
+    #       hosts: ["198.51.100.10"]             # the DO droplet IP
+    #       traefik_host: example.com
+    #       kamal_config: config/deploy.production.yml
+    #       secrets_file: .kamal/secrets.production
+    #       health_url: https://example.com/up
+    # ship:                 # optional — wires `homebase work ship <app> <version> <target>`; mobile/desktop counterpart to deploy.
+    #   tool: fastlane
+    #   fastlane_root: fastlane                  # repo-relative; default 'fastlane'
+    #   branch: main                             # default
+    #   validate_lane: validate                  # optional fastlane lane run as pre-flight
+    #   version_file:
+    #     path: iOS/Apps/App/App.xcconfig
+    #     language: xcconfig                     # or `gradle-kts` for Android, `plist` for Info.plist
+    #     key: MARKETING_VERSION                 # constant name in version_file
+    #   targets:
+    #     testflight:                            # yellow-tier — no extra env required
+    #       fastlane_app: app
+    #       platform: ios
+    #       track: testflight
+    #       tier: yellow
+    #     appstore:                              # red-tier — requires HOMEBASE_SHIP_CONFIRMED=1
+    #       fastlane_app: app
+    #       platform: ios
+    #       track: appstore
+    #       tier: red
+    #     mac-appstore:                          # macOS slice: platform:ios + tag_platform:macos override
+    #       fastlane_app: app-mac
+    #       platform: ios
+    #       track: appstore
+    #       tier: red
+    #       tag_platform: macos
+    # roadmap:              # optional — enables HOMEBASE-SOP-013 Linear roadmap tracking for this app.
+    #   enabled: true
+    #   linear_team_key: XXX                     # 2–4 uppercase chars; matches standards/LINEAR_WORKSPACE.md canon.
+    #   # linear_team_id populated by `homebase roadmap capture <app>`; do not hand-edit.
+    #   # linear_team_id: team_...
+    #   owner_agent: example-product-pm            # one of: example-product-pm | diving-product-manager | technical-project-manager
+    #   github_sync:
+    #     auto_create_issues: true
+    #     auto_close_on_pr_merge: true
